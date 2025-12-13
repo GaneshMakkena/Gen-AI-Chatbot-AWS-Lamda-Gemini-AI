@@ -1,5 +1,9 @@
 # Medical Assistant Chatbot - Cloud AI Powered
 
+![Phase](https://img.shields.io/badge/Phase-1%20Complete-brightgreen)
+![LLM](https://img.shields.io/badge/LLM-Gemini%202.5%20Pro-blue)
+![Status](https://img.shields.io/badge/Status-Production-success)
+
 A modern, AI-powered medical assistant chatbot with:
 - 🤖 **Google Gemini 2.5 Pro** for fast, accurate medical advice
 - 🖼️ **AI-generated medical illustrations** (Gemini 2.5 Flash Image) for **every treatment step**
@@ -7,6 +11,43 @@ A modern, AI-powered medical assistant chatbot with:
 - 🚀 **Parallel Processing** for low-latency responses
 - 🌐 **Multilingual support** (English, Telugu, Hindi)
 - 📱 **Responsive design** (mobile, tablet, desktop)
+
+---
+
+## 📍 Project Roadmap
+
+### ✅ Phase 1: Core MVP (Complete)
+| Feature | Status |
+| :--- | :--- |
+| FastAPI backend on AWS Lambda | ✅ Done |
+| Next.js frontend on CloudFront | ✅ Done |
+| Google Gemini 2.5 Pro LLM integration | ✅ Done |
+| Gemini 2.5 Flash Image generation | ✅ Done |
+| Step-by-step visual treatment guides | ✅ Done |
+| S3 image storage with presigned URLs | ✅ Done |
+| Multilingual support (EN, TE, HI) | ✅ Done |
+| Parallel image generation (5 max) | ✅ Done |
+| Production deployment (us-east-1) | ✅ Done |
+
+### 🔜 Phase 2: Custom Domain & Enhancements (Upcoming)
+| Feature | Status |
+| :--- | :--- |
+| Custom domain (ganeshmakkena.online) | 🔜 Planned |
+| SSL certificate via ACM | 🔜 Planned |
+| API Gateway custom domain | 🔜 Planned |
+| WebSocket for streaming responses | 🔜 Planned |
+| Async processing for unlimited images | 🔜 Planned |
+
+### 📋 Phase 3: Advanced Features (Future)
+| Feature | Status |
+| :--- | :--- |
+| User authentication (Cognito) | 📋 Planned |
+| Chat history persistence (DynamoDB) | 📋 Planned |
+| Voice input/output (speech-to-text) | 📋 Planned |
+| Mobile app (React Native) | 📋 Planned |
+| Analytics dashboard | 📋 Planned |
+
+---
 
 ## 🏗️ Architecture
 
