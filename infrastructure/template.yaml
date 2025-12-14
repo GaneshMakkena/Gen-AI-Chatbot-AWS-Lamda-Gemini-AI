@@ -57,6 +57,8 @@ Resources:
           COGNITO_CLIENT_ID: !Ref UserPoolClient
           CHAT_TABLE: !Ref ChatHistoryTable
           REPORTS_BUCKET: !Ref ReportsBucket
+          # Phase 2.5: Health Memory RAG
+          HEALTH_PROFILE_TABLE: !Ref HealthProfileTable
       Policies:
         - Statement:
             - Effect: Allow
@@ -80,6 +82,15 @@ Resources:
               Resource:
                 - !GetAtt ChatHistoryTable.Arn
                 - !Sub ${ChatHistoryTable.Arn}/index/*
+            # Phase 2.5: Health Profile permissions
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+              Resource:
+                - !GetAtt HealthProfileTable.Arn
             # Phase 2: Reports bucket permissions
             - Effect: Allow
               Action:
@@ -241,6 +252,20 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  # DynamoDB Table for Health Profiles (RAG Memory)
+  HealthProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub medibot-health-profiles-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      # No TTL - health data persists until user deletes
+
   # S3 Bucket for Medical Reports (private, encrypted)
   ReportsBucket:
     Type: AWS::S3::Bucket
@@ -383,3 +408,9 @@ Outputs:
     Value: !Ref ReportsBucket
     Export:
       Name: !Sub ${AWS::StackName}-ReportsBucket
+
+  HealthProfileTableName:
+    Description: DynamoDB table for health profiles (RAG memory)
+    Value: !Ref HealthProfileTable
+    Export:
+      Name: !Sub ${AWS::StackName}-HealthProfileTable

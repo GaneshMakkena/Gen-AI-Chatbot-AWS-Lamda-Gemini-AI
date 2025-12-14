@@ -435,6 +435,14 @@ export default function Home() {
                         <p className="text-sm font-medium text-gray-900 dark:text-white">{user?.name}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400">{user?.email}</p>
                       </div>
+                      <Link
+                        href="/profile"
+                        onClick={() => setShowUserMenu(false)}
+                        className="w-full px-4 py-3 text-left flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors text-gray-700 dark:text-gray-300"
+                      >
+                        <Heart className="w-4 h-4" />
+                        Health Profile
+                      </Link>
                       <button
                         onClick={() => {
                           logout();

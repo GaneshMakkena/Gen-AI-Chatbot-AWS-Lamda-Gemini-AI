@@ -40,6 +40,15 @@ from chat_history import (
     save_chat, get_user_chats, get_chat, delete_chat,
     get_chat_summary, generate_chat_id
 )
+# Phase 2.5: Health Memory RAG
+from health_profile import (
+    get_health_profile, get_context_summary, get_or_create_profile,
+    add_condition, add_medication, add_allergy, update_basic_info,
+    delete_health_profile, remove_condition
+)
+from report_analyzer import (
+    analyze_report, confirm_and_save_analysis, extract_facts_from_chat
+)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -167,6 +176,15 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
             for msg in request.conversation_history[-4:]  # Last 4 messages for context
         ])
     
+    # Phase 2.5: Inject health context for personalized RAG
+    health_context = ""
+    if user_info:
+        health_context = get_context_summary(user_info["user_id"])
+        if health_context:
+            print(f"Injecting health context for user {user_info['user_id'][:8]}...")
+            # Prepend health context to conversation context
+            context = health_context + "\n" + context
+    
     # Get LLM response with in-depth research
     print(f"Processing query: {english_query[:100]}... (thinking_mode={request.thinking_mode})")
     response = invoke_llm(english_query, context=context, thinking_mode=request.thinking_mode)
@@ -246,6 +264,14 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
         except Exception as e:
             print(f"Failed to save chat: {e}")
             # Don't fail the request if chat save fails
+        
+        # Phase 2.5: Extract health facts from user's message (background task)
+        try:
+            extracted = extract_facts_from_chat(user_info["user_id"], query, final_response)
+            if extracted:
+                print(f"Extracted facts: {extracted}")
+        except Exception as e:
+            print(f"Failed to extract facts: {e}")
     
     return ChatResponse(
         answer=final_response,
@@ -492,6 +518,181 @@ async def get_upload_url(
     except Exception as e:
         print(f"Error generating presigned URL: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate upload URL")
+
+
+# ============================================
+# Phase 2.5: Health Profile & RAG Endpoints
+# ============================================
+
+class HealthProfileResponse(BaseModel):
+    user_id: str
+    conditions: List[Dict[str, Any]]
+    medications: List[Dict[str, Any]]
+    allergies: List[Dict[str, Any]]
+    blood_type: str
+    age: Optional[int]
+    gender: str
+    key_facts: List[Dict[str, Any]]
+    report_summaries: List[Dict[str, Any]]
+    last_updated: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    conditions: Optional[List[str]] = None
+    medications: Optional[List[Dict[str, str]]] = None
+    allergies: Optional[List[str]] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    blood_type: Optional[str] = None
+
+
+class AnalyzeReportRequest(BaseModel):
+    file_key: str
+
+
+class ConfirmAnalysisRequest(BaseModel):
+    file_key: str
+    extracted: Dict[str, Any]
+
+
+@app.get("/profile")
+async def get_profile(authorization: Optional[str] = Header(None)):
+    """Get user's health profile."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    profile = get_or_create_profile(user["user_id"])
+    
+    return {
+        "user_id": profile.get("user_id", ""),
+        "conditions": profile.get("conditions", []),
+        "medications": profile.get("medications", []),
+        "allergies": profile.get("allergies", []),
+        "blood_type": profile.get("blood_type", ""),
+        "age": profile.get("age"),
+        "gender": profile.get("gender", ""),
+        "key_facts": profile.get("key_facts", []),
+        "report_summaries": profile.get("report_summaries", []),
+        "last_updated": profile.get("last_updated", "")
+    }
+
+
+@app.put("/profile")
+async def update_profile(
+    request: ProfileUpdateRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """Update user's health profile manually."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    user_id = user["user_id"]
+    
+    # Add conditions
+    if request.conditions:
+        for condition in request.conditions:
+            add_condition(user_id, condition, source="manual")
+    
+    # Add medications
+    if request.medications:
+        for med in request.medications:
+            add_medication(user_id, med.get("name", ""), med.get("dosage", ""), source="manual")
+    
+    # Add allergies
+    if request.allergies:
+        for allergy in request.allergies:
+            add_allergy(user_id, allergy, source="manual")
+    
+    # Update basic info
+    if any([request.age, request.gender, request.blood_type]):
+        update_basic_info(user_id, age=request.age, gender=request.gender, blood_type=request.blood_type)
+    
+    return {"message": "Profile updated", "user_id": user_id}
+
+
+@app.delete("/profile")
+async def delete_profile(authorization: Optional[str] = Header(None)):
+    """Delete user's entire health profile."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    success = delete_health_profile(user["user_id"])
+    if success:
+        return {"message": "Profile deleted"}
+    raise HTTPException(status_code=500, detail="Failed to delete profile")
+
+
+@app.delete("/profile/condition/{condition_name}")
+async def remove_profile_condition(
+    condition_name: str,
+    authorization: Optional[str] = Header(None)
+):
+    """Remove a specific condition from user's profile."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    success = remove_condition(user["user_id"], condition_name)
+    if success:
+        return {"message": f"Condition '{condition_name}' removed"}
+    raise HTTPException(status_code=404, detail="Condition not found")
+
+
+@app.post("/analyze-report")
+async def analyze_uploaded_report(
+    request: AnalyzeReportRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """Analyze an uploaded medical report using Gemini multimodal."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    result = analyze_report(request.file_key, user["user_id"])
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Analysis failed"))
+    
+    return result
+
+
+@app.post("/confirm-analysis")
+async def confirm_report_analysis(
+    request: ConfirmAnalysisRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """Confirm and save extracted health information from a report."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    result = confirm_and_save_analysis(user["user_id"], request.extracted, request.file_key)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Save failed"))
+    
+    return result
 
 
 # Run with: uvicorn api_server:app --reload --port 8000
