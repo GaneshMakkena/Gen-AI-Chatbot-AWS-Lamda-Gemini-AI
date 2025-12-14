@@ -1,9 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Mic, MicOff, Globe, Stethoscope, Heart, Loader2, Image as ImageIcon, ChevronLeft, ChevronRight, PlusCircle } from "lucide-react";
+import { Send, Mic, MicOff, Globe, Stethoscope, Heart, Loader2, Image as ImageIcon, ChevronLeft, ChevronRight, PlusCircle, User, LogIn, LogOut, Volume2, History } from "lucide-react";
+import Link from "next/link";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
+import { useAuth } from "@/contexts/AuthContext";
+import { useSpeechRecognition, speakText } from "@/hooks/useSpeechRecognition";
+import HistorySidebar from "@/components/HistorySidebar";
+import ReportUpload from "@/components/ReportUpload";
 
 // API Configuration
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -158,11 +163,35 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<Language>(LANGUAGES[0]);
-  const [isRecording, setIsRecording] = useState(false);
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showHistorySidebar, setShowHistorySidebar] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auth context
+  const { user, isAuthenticated, logout, getToken } = useAuth();
+
+  // Voice recognition with microphone permission
+  const {
+    isListening,
+    isSupported: voiceSupported,
+    hasPermission: micPermission,
+    transcript,
+    startListening,
+    stopListening,
+    requestPermission
+  } = useSpeechRecognition({
+    language: selectedLanguage.code === "te" ? "te-IN" :
+      selectedLanguage.code === "hi" ? "hi-IN" : "en-US",
+    onResult: (text) => {
+      setInput(text);
+    },
+    onError: (error) => {
+      console.error("Voice error:", error);
+    }
+  });
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -193,12 +222,23 @@ export default function Home() {
     setIsLoading(true);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/chat`, {
-        query: userMessage.content,
-        language: selectedLanguage.name,
-        generate_images: true,
-        conversation_history: getConversationHistory(),
-      });
+      // Get auth token if logged in
+      const token = await getToken();
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      const response = await axios.post(
+        `${API_BASE_URL}/chat`,
+        {
+          query: userMessage.content,
+          language: selectedLanguage.name,
+          generate_images: true,
+          conversation_history: getConversationHistory(),
+        },
+        { headers }
+      );
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -233,14 +273,12 @@ export default function Home() {
     }
   };
 
-  // Toggle voice recording (placeholder)
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
-    if (!isRecording) {
-      setTimeout(() => {
-        setIsRecording(false);
-        setInput("How do I perform CPR?");
-      }, 2000);
+  // Toggle voice recording using Web Speech API
+  const toggleRecording = async () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      await startListening();
     }
   };
 
@@ -250,8 +288,50 @@ export default function Home() {
     setInput("");
   };
 
+  // Handle selecting a chat from history
+  const handleSelectChat = async (chatId: string) => {
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      const response = await fetch(`${API_BASE_URL}/history/${chatId}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+
+      if (response.ok) {
+        const chat = await response.json();
+        // Load the chat into messages
+        setMessages([
+          {
+            id: "1",
+            role: "user",
+            content: chat.query,
+            timestamp: new Date(chat.timestamp),
+          },
+          {
+            id: "2",
+            role: "assistant",
+            content: chat.response,
+            topic: chat.topic,
+            timestamp: new Date(chat.timestamp),
+          }
+        ]);
+        setShowHistorySidebar(false);
+      }
+    } catch (err) {
+      console.error("Failed to load chat:", err);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
+      {/* History Sidebar */}
+      <HistorySidebar
+        isOpen={showHistorySidebar}
+        onClose={() => setShowHistorySidebar(false)}
+        onSelectChat={handleSelectChat}
+      />
+
       {/* Header */}
       <header className="gradient-hero text-white shadow-lg sticky top-0 z-50">
         <div className="container-responsive py-4">
@@ -269,6 +349,27 @@ export default function Home() {
 
             {/* Actions */}
             <div className="flex items-center gap-2">
+              {/* History Button - Only show if authenticated */}
+              {isAuthenticated && (
+                <button
+                  onClick={() => setShowHistorySidebar(true)}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+                  title="Chat History"
+                >
+                  <History className="w-5 h-5" />
+                  <span className="hidden sm:inline">History</span>
+                </button>
+              )}
+
+              {/* Report Upload - Only show if authenticated */}
+              {isAuthenticated && (
+                <ReportUpload
+                  onAnalysisComplete={(prompt) => {
+                    setInput(prompt);
+                  }}
+                />
+              )}
+
               {/* New Chat Button */}
               {messages.length > 0 && (
                 <button
@@ -314,6 +415,48 @@ export default function Home() {
                   </div>
                 )}
               </div>
+
+              {/* User Auth Button */}
+              {isAuthenticated ? (
+                <div className="relative">
+                  <button
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center text-white font-semibold">
+                      {user?.name?.charAt(0).toUpperCase() || "U"}
+                    </div>
+                    <span className="hidden sm:inline">{user?.name}</span>
+                  </button>
+
+                  {showUserMenu && (
+                    <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-xl overflow-hidden animate-fade-in z-50">
+                      <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">{user?.name}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">{user?.email}</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          logout();
+                          setShowUserMenu(false);
+                        }}
+                        className="w-full px-4 py-3 text-left flex items-center gap-3 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors text-red-600 dark:text-red-400"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Sign Out
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <Link
+                  href="/login"
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+                >
+                  <LogIn className="w-5 h-5" />
+                  <span className="hidden sm:inline">Sign In</span>
+                </Link>
+              )}
             </div>
           </div>
         </div>
@@ -409,13 +552,14 @@ export default function Home() {
             {/* Voice Input Button */}
             <button
               onClick={toggleRecording}
-              className={`p-3 rounded-full transition-all ${isRecording
+              disabled={!voiceSupported}
+              className={`p-3 rounded-full transition-all ${isListening
                 ? "bg-red-500 text-white animate-pulse"
                 : "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
-                }`}
-              title={isRecording ? "Stop recording" : "Start voice input"}
+                } ${!voiceSupported ? "opacity-50 cursor-not-allowed" : ""}`}
+              title={!voiceSupported ? "Voice input not supported" : isListening ? "Stop recording" : "Start voice input"}
             >
-              {isRecording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             </button>
 
             {/* Text Input */}

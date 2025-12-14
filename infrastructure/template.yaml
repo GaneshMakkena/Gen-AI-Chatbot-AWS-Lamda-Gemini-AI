@@ -52,6 +52,11 @@ Resources:
           BEDROCK_REGION: !Ref AWS::Region
           ENVIRONMENT: !Ref Environment
           IMAGES_BUCKET: !Ref ImagesBucket
+          # Phase 2: Auth & Storage
+          COGNITO_USER_POOL_ID: !Ref UserPool
+          COGNITO_CLIENT_ID: !Ref UserPoolClient
+          CHAT_TABLE: !Ref ChatHistoryTable
+          REPORTS_BUCKET: !Ref ReportsBucket
       Policies:
         - Statement:
             - Effect: Allow
@@ -64,6 +69,24 @@ Resources:
                 - s3:PutObject
                 - s3:GetObject
               Resource: !Sub ${ImagesBucket.Arn}/*
+            # Phase 2: DynamoDB permissions
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:DeleteItem
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt ChatHistoryTable.Arn
+                - !Sub ${ChatHistoryTable.Arn}/index/*
+            # Phase 2: Reports bucket permissions
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: !Sub ${ReportsBucket.Arn}/*
       Events:
         ApiRoot:
           Type: HttpApi
@@ -129,6 +152,122 @@ Resources:
             Principal: '*'
             Action: s3:GetObject
             Resource: !Sub ${ImagesBucket.Arn}/*
+
+  # ============================================
+  # Phase 2: User Authentication & Data Storage
+  # ============================================
+
+  # Cognito User Pool for authentication
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub medibot-users-${Environment}
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+        - Name: name
+          Required: false
+          Mutable: true
+
+  # Cognito App Client
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub medibot-web-${Environment}
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - https://d17eixu2k5iihu.cloudfront.net
+        - http://localhost:3000
+      LogoutURLs:
+        - https://d17eixu2k5iihu.cloudfront.net
+        - http://localhost:3000
+      AllowedOAuthFlows:
+        - code
+        - implicit
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+
+  # DynamoDB Table for Chat History
+  ChatHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub medibot-chats-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: chat_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: chat_id
+          KeyType: RANGE
+      LocalSecondaryIndexes:
+        - IndexName: timestamp-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # S3 Bucket for Medical Reports (private, encrypted)
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub medibot-reports-${AWS::AccountId}-${AWS::Region}-${Environment}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins:
+              - https://d17eixu2k5iihu.cloudfront.net
+              - http://localhost:3000
+            MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldReports
+            Status: Enabled
+            ExpirationInDays: 30  # Auto-delete reports after 30 days
 
   # S3 Bucket for Frontend Static Files
   FrontendBucket:
@@ -215,3 +354,32 @@ Outputs:
     Value: !Ref CloudFrontDistribution
     Export:
       Name: !Sub ${AWS::StackName}-CloudFrontDistributionId
+
+  # Phase 2 Outputs
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID for authentication
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub ${AWS::StackName}-UserPoolId
+
+  CognitoClientId:
+    Description: Cognito App Client ID for frontend
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub ${AWS::StackName}-UserPoolClientId
+
+  CognitoRegion:
+    Description: AWS Region for Cognito
+    Value: !Ref AWS::Region
+
+  ChatHistoryTableName:
+    Description: DynamoDB table for chat history
+    Value: !Ref ChatHistoryTable
+    Export:
+      Name: !Sub ${AWS::StackName}-ChatTable
+
+  ReportsBucketName:
+    Description: S3 bucket for medical reports
+    Value: !Ref ReportsBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-ReportsBucket

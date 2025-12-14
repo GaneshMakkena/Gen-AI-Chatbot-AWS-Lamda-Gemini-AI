@@ -6,8 +6,9 @@ FastAPI backend with conversational AI and step-by-step visual instructions.
 import os
 import base64
 import hashlib
+import boto3
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -32,6 +33,12 @@ from translation import (
     translate_from_english,
     detect_language,
     SUPPORTED_LANGUAGES
+)
+# Phase 2: Auth and History
+from auth import get_user_info, verify_token
+from chat_history import (
+    save_chat, get_user_chats, get_chat, delete_chat,
+    get_chat_summary, generate_chat_id
 )
 
 # Initialize FastAPI app
@@ -122,7 +129,7 @@ async def get_languages():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)):
     """
     Process a medical question with in-depth research and step-by-step visual instructions.
     
@@ -132,12 +139,18 @@ async def chat(request: ChatRequest):
     - Generates an image for EACH step (no limit)
     - All images are 512x512 resolution
     - Conversational, helpful responses
+    - Saves chat to DynamoDB if authenticated
     """
     query = request.query.strip()
     language = request.language
     
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    # Check if user is authenticated (optional)
+    user_info = None
+    if authorization:
+        user_info = get_user_info(authorization)
     
     # Detect input language and translate to English if needed
     detected_lang = detect_language(query)
@@ -218,6 +231,22 @@ async def chat(request: ChatRequest):
             if all_images:
                 primary_image = all_images[0]
     
+    # Save chat to DynamoDB if user is authenticated
+    if user_info:
+        try:
+            save_chat(
+                user_id=user_info["user_id"],
+                query=query,
+                response=final_response,
+                images=all_images if all_images else [],
+                topic=topic,
+                language=language
+            )
+            print(f"Chat saved for user {user_info['user_id'][:8]}...")
+        except Exception as e:
+            print(f"Failed to save chat: {e}")
+            # Don't fail the request if chat save fails
+    
     return ChatResponse(
         answer=final_response,
         original_query=query,
@@ -245,7 +274,228 @@ async def create_image(request: ImageRequest):
     return ImageResponse(image=image_b64, prompt=request.prompt)
 
 
+# ============================================
+# Phase 2: Authentication & User Features
+# ============================================
+
+# Environment variables for Phase 2
+REPORTS_BUCKET = os.getenv("REPORTS_BUCKET", "")
+COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
+COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID", "")
+
+
+# Request/Response Models for Phase 2
+class UserInfo(BaseModel):
+    user_id: str
+    email: str
+    name: str
+
+
+class ChatHistoryItem(BaseModel):
+    chat_id: str
+    query: str
+    topic: str
+    timestamp: int
+    created_at: str
+    has_images: bool
+
+
+class ChatHistoryResponse(BaseModel):
+    items: List[ChatHistoryItem]
+    count: int
+    has_more: bool = False
+
+
+class ChatDetailResponse(BaseModel):
+    chat_id: str
+    query: str
+    response: str
+    images: List[str]
+    topic: str
+    language: str
+    timestamp: int
+    created_at: str
+
+
+class UploadUrlRequest(BaseModel):
+    filename: str
+    content_type: str = "application/pdf"
+
+
+class UploadUrlResponse(BaseModel):
+    upload_url: str
+    file_key: str
+    expires_in: int = 3600
+
+
+# Auth Endpoints
+@app.get("/auth/verify")
+async def verify_auth(authorization: Optional[str] = Header(None)):
+    """Verify if the user's token is valid."""
+    if not authorization:
+        return {"authenticated": False, "message": "No token provided"}
+    
+    user = get_user_info(authorization)
+    if user:
+        return {"authenticated": True, "user": user}
+    return {"authenticated": False, "message": "Invalid or expired token"}
+
+
+@app.get("/auth/me", response_model=UserInfo)
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    """Get current user information."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    return UserInfo(
+        user_id=user.get("user_id", ""),
+        email=user.get("email", ""),
+        name=user.get("name", "")
+    )
+
+
+@app.get("/auth/config")
+async def get_auth_config():
+    """Get Cognito configuration for frontend."""
+    return {
+        "userPoolId": COGNITO_USER_POOL_ID,
+        "clientId": COGNITO_CLIENT_ID,
+        "region": os.getenv("BEDROCK_REGION", "us-east-1")
+    }
+
+
+# Chat History Endpoints
+@app.get("/history", response_model=ChatHistoryResponse)
+async def list_chat_history(
+    authorization: Optional[str] = Header(None),
+    limit: int = 20
+):
+    """Get user's chat history (requires auth)."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    result = get_user_chats(user["user_id"], limit=limit)
+    items = [get_chat_summary(chat) for chat in result.get("items", [])]
+    
+    return ChatHistoryResponse(
+        items=[ChatHistoryItem(**item) for item in items],
+        count=len(items),
+        has_more="last_key" in result
+    )
+
+
+@app.get("/history/{chat_id}", response_model=ChatDetailResponse)
+async def get_chat_detail(
+    chat_id: str,
+    authorization: Optional[str] = Header(None)
+):
+    """Get a specific chat with full details."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    chat = get_chat(user["user_id"], chat_id)
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    
+    return ChatDetailResponse(
+        chat_id=chat.get("chat_id", ""),
+        query=chat.get("query", ""),
+        response=chat.get("response", ""),
+        images=chat.get("images", []),
+        topic=chat.get("topic", ""),
+        language=chat.get("language", "English"),
+        timestamp=chat.get("timestamp", 0),
+        created_at=chat.get("created_at", "")
+    )
+
+
+@app.delete("/history/{chat_id}")
+async def delete_chat_endpoint(
+    chat_id: str,
+    authorization: Optional[str] = Header(None)
+):
+    """Delete a specific chat."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    success = delete_chat(user["user_id"], chat_id)
+    if success:
+        return {"message": "Chat deleted", "chat_id": chat_id}
+    raise HTTPException(status_code=500, detail="Failed to delete chat")
+
+
+# Report Upload Endpoints
+@app.post("/upload-report", response_model=UploadUrlResponse)
+async def get_upload_url(
+    request: UploadUrlRequest,
+    authorization: Optional[str] = Header(None)
+):
+    """Get a presigned URL to upload a medical report."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    
+    user = get_user_info(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    if not REPORTS_BUCKET:
+        raise HTTPException(status_code=500, detail="Reports bucket not configured")
+    
+    # Validate content type
+    allowed_types = ["application/pdf", "image/jpeg", "image/png", "image/jpg"]
+    if request.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid content type. Allowed: {allowed_types}"
+        )
+    
+    # Generate unique file key
+    import uuid
+    import time
+    file_ext = request.filename.split(".")[-1] if "." in request.filename else "pdf"
+    file_key = f"reports/{user['user_id']}/{int(time.time())}_{uuid.uuid4().hex[:8]}.{file_ext}"
+    
+    # Generate presigned URL
+    s3 = boto3.client('s3', region_name=os.getenv("BEDROCK_REGION", "us-east-1"))
+    try:
+        upload_url = s3.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': REPORTS_BUCKET,
+                'Key': file_key,
+                'ContentType': request.content_type
+            },
+            ExpiresIn=3600  # 1 hour
+        )
+        
+        return UploadUrlResponse(
+            upload_url=upload_url,
+            file_key=file_key,
+            expires_in=3600
+        )
+    except Exception as e:
+        print(f"Error generating presigned URL: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate upload URL")
+
+
 # Run with: uvicorn api_server:app --reload --port 8000
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+
