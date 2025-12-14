@@ -158,6 +158,9 @@ function StepImagesGallery({ steps }: { steps: StepImage[] }) {
   );
 }
 
+// Guest users are limited to this many messages
+const GUEST_MESSAGE_LIMIT = 4;
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -166,6 +169,8 @@ export default function Home() {
   const [showLanguageMenu, setShowLanguageMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showHistorySidebar, setShowHistorySidebar] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginModalMessage, setLoginModalMessage] = useState("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -209,6 +214,14 @@ export default function Home() {
   // Handle sending a message
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
+
+    // Check guest message limit
+    const userMessageCount = messages.filter(m => m.role === "user").length;
+    if (!isAuthenticated && userMessageCount >= GUEST_MESSAGE_LIMIT) {
+      setLoginModalMessage(`You've reached the ${GUEST_MESSAGE_LIMIT} message limit for guest users. Create a free account to continue chatting with unlimited messages!`);
+      setShowLoginModal(true);
+      return;
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -349,17 +362,22 @@ export default function Home() {
 
             {/* Actions */}
             <div className="flex items-center gap-2">
-              {/* History Button - Only show if authenticated */}
-              {isAuthenticated && (
-                <button
-                  onClick={() => setShowHistorySidebar(true)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
-                  title="Chat History"
-                >
-                  <History className="w-5 h-5" />
-                  <span className="hidden sm:inline">History</span>
-                </button>
-              )}
+              {/* History Button - Show for all users, prompt login for guests */}
+              <button
+                onClick={() => {
+                  if (isAuthenticated) {
+                    setShowHistorySidebar(true);
+                  } else {
+                    setLoginModalMessage("Sign in to view your chat history and get personalized medical advice.");
+                    setShowLoginModal(true);
+                  }
+                }}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
+                title="Chat History"
+              >
+                <History className="w-5 h-5" />
+                <span className="hidden sm:inline">History</span>
+              </button>
 
               {/* Report Upload - Only show if authenticated */}
               {isAuthenticated && (
@@ -557,6 +575,23 @@ export default function Home() {
       <div className="sticky bottom-0 bg-white dark:bg-slate-900 border-t border-gray-200 dark:border-slate-700 shadow-lg">
         <div className="container-responsive py-4">
           <div className="flex items-center gap-2 md:gap-3">
+            {/* Upload Button (+) - For authenticated users */}
+            <button
+              onClick={() => {
+                if (isAuthenticated) {
+                  // Trigger file input (would need a ref to ReportUpload component)
+                  document.getElementById("report-upload-trigger")?.click();
+                } else {
+                  setLoginModalMessage("Sign in to upload medical reports and get AI-powered analysis.");
+                  setShowLoginModal(true);
+                }
+              }}
+              className="p-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600 transition-all shadow-md"
+              title="Upload medical report"
+            >
+              <PlusCircle className="w-5 h-5" />
+            </button>
+
             {/* Voice Input Button */}
             <button
               onClick={toggleRecording}
@@ -565,7 +600,7 @@ export default function Home() {
                 ? "bg-red-500 text-white animate-pulse"
                 : "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
                 } ${!voiceSupported ? "opacity-50 cursor-not-allowed" : ""}`}
-              title={!voiceSupported ? "Voice input not supported" : isListening ? "Stop recording" : "Start voice input"}
+              title={!voiceSupported ? "Voice input not supported in this browser. Try Chrome or Edge." : isListening ? "Stop recording" : "Start voice input"}
             >
               {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
             </button>
@@ -605,6 +640,50 @@ export default function Home() {
           </p>
         </div>
       </div>
+
+      {/* Login Modal for Guest Users */}
+      {showLoginModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in">
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center mx-auto mb-4">
+                <User className="w-8 h-8 text-white" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                Sign In Required
+              </h2>
+              <p className="text-gray-600 dark:text-gray-400">
+                {loginModalMessage}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <Link
+                href="/login"
+                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl font-medium text-center transition-all"
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/signup"
+                className="w-full py-3 px-4 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-xl font-medium text-center transition-colors"
+              >
+                Create Free Account
+              </Link>
+              <button
+                onClick={() => setShowLoginModal(false)}
+                className="w-full py-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm transition-colors"
+              >
+                Maybe Later
+              </button>
+            </div>
+
+            <p className="text-xs text-center text-gray-400 mt-4">
+              ✨ Free accounts get unlimited messages, chat history, and personalized health memory
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
