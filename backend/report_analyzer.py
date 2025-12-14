@@ -29,18 +29,17 @@ AWS_REGION = os.getenv("BEDROCK_REGION", "us-east-1")
 # S3 client for fetching reports
 s3_client = boto3.client("s3", region_name=AWS_REGION)
 
-# Lazy-loaded Gemini client
-_genai = None
+# Lazy-loaded Gemini client (use same SDK as gemini_client.py)
+_client = None
 
 
-def get_genai():
-    """Lazy load the Gemini client."""
-    global _genai
-    if _genai is None:
-        import google.generativeai as genai
-        genai.configure(api_key=GOOGLE_API_KEY)
-        _genai = genai
-    return _genai
+def get_client():
+    """Get the Gemini client (same as gemini_client.py)."""
+    global _client
+    if _client is None:
+        from google import genai
+        _client = genai.Client(api_key=GOOGLE_API_KEY)
+    return _client
 
 
 @dataclass
@@ -127,26 +126,27 @@ def analyze_report(file_key: str, user_id: str) -> Dict[str, Any]:
     file_ext = file_key.split(".")[-1].lower()
     
     try:
-        # Use Gemini to analyze
-        model = get_genai().GenerativeModel("gemini-2.0-flash")
+        # Use new google-genai SDK
+        from google.genai import types
+        client = get_client()
         
         if file_ext in ["jpg", "jpeg", "png", "webp"]:
             # Image analysis
-            image_data = base64.b64encode(file_bytes).decode("utf-8")
             mime_type = f"image/{'jpeg' if file_ext in ['jpg', 'jpeg'] else file_ext}"
+            image_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
             
-            response = model.generate_content([
-                EXTRACTION_PROMPT,
-                {"mime_type": mime_type, "data": image_data}
-            ])
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=[EXTRACTION_PROMPT, image_part]
+            )
         elif file_ext == "pdf":
-            # PDF analysis - Gemini can handle PDFs directly
-            pdf_data = base64.b64encode(file_bytes).decode("utf-8")
+            # PDF analysis
+            pdf_part = types.Part.from_bytes(data=file_bytes, mime_type="application/pdf")
             
-            response = model.generate_content([
-                EXTRACTION_PROMPT,
-                {"mime_type": "application/pdf", "data": pdf_data}
-            ])
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=[EXTRACTION_PROMPT, pdf_part]
+            )
         else:
             return {
                 "success": False,
@@ -335,8 +335,11 @@ Do NOT infer or guess - only extract what the user directly said.
 """
     
     try:
-        model = get_genai().GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(extraction_prompt)
+        client = get_client()
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=extraction_prompt
+        )
         
         response_text = response.text
         

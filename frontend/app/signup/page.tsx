@@ -4,12 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { Mail, Lock, User, UserPlus, Loader2, AlertCircle, Stethoscope, CheckCircle } from "lucide-react";
+import { Mail, Lock, User, UserPlus, Loader2, AlertCircle, Stethoscope, CheckCircle, Eye, EyeOff } from "lucide-react";
 
 export default function SignupPage() {
     const [step, setStep] = useState<"signup" | "confirm">("signup");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
     const [name, setName] = useState("");
     const [code, setCode] = useState("");
     const [error, setError] = useState("");
@@ -116,7 +117,6 @@ export default function SignupPage() {
                                 </div>
                             </div>
 
-                            {/* Password Input */}
                             <div>
                                 <label className="block text-white/80 text-sm font-medium mb-2">
                                     Password
@@ -124,14 +124,21 @@ export default function SignupPage() {
                                 <div className="relative">
                                     <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/50" />
                                     <input
-                                        type="password"
+                                        type={showPassword ? "text" : "password"}
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
-                                        className="w-full pl-11 pr-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
+                                        className="w-full pl-11 pr-12 py-3 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
                                         placeholder="••••••••"
                                         required
                                         minLength={8}
                                     />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(!showPassword)}
+                                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-white/50 hover:text-white/80"
+                                    >
+                                        {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                                    </button>
                                 </div>
                                 <p className="mt-1 text-white/50 text-xs">
                                     At least 8 characters with uppercase, lowercase, and number

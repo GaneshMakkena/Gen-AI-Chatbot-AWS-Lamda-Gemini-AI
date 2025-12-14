@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Mic, MicOff, Globe, Stethoscope, Heart, Loader2, Image as ImageIcon, ChevronLeft, ChevronRight, PlusCircle, User, LogIn, LogOut, Volume2, History } from "lucide-react";
+import { Send, Mic, MicOff, Globe, Stethoscope, Heart, Loader2, Image as ImageIcon, ChevronLeft, ChevronRight, PlusCircle, User, LogIn, LogOut, Volume2, History, Paperclip } from "lucide-react";
 import Link from "next/link";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSpeechRecognition, speakText } from "@/hooks/useSpeechRecognition";
 import HistorySidebar from "@/components/HistorySidebar";
-import ReportUpload from "@/components/ReportUpload";
+import FileAttachments, { AttachedFile, validateFiles, createAttachedFile } from "@/components/FileAttachments";
 
 // API Configuration
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -23,6 +23,13 @@ interface StepImage {
   image_url?: string;  // S3 URL (preferred)
 }
 
+interface MessageAttachment {
+  filename: string;
+  type: "pdf" | "image";
+  url?: string;  // S3 URL for download
+  preview?: string;  // Base64 preview for images
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant";
@@ -31,6 +38,7 @@ interface Message {
   stepsCount?: number;
   topic?: string;
   timestamp: Date;
+  attachments?: MessageAttachment[];  // File attachments
 }
 
 interface Language {
@@ -171,9 +179,12 @@ export default function Home() {
   const [showHistorySidebar, setShowHistorySidebar] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginModalMessage, setLoginModalMessage] = useState("");
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [fileError, setFileError] = useState("");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auth context
   const { user, isAuthenticated, logout, getToken } = useAuth();
@@ -213,7 +224,7 @@ export default function Home() {
 
   // Handle sending a message
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && attachedFiles.length === 0) || isLoading) return;
 
     // Check guest message limit
     const userMessageCount = messages.filter(m => m.role === "user").length;
@@ -223,11 +234,22 @@ export default function Home() {
       return;
     }
 
+    // Build message attachments from attached files
+    const messageAttachments: MessageAttachment[] = attachedFiles.map(f => ({
+      filename: f.file.name,
+      type: f.type,
+      preview: f.preview,  // Keep preview for images
+    }));
+
+    // User content - just the text, don't prepend file info
+    const userContent = input.trim() || (attachedFiles.length > 0 ? "Please analyze these files." : "");
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
-      content: input.trim(),
+      content: userContent,
       timestamp: new Date(),
+      attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
     };
 
     setMessages((prev) => [...prev, userMessage]);
@@ -242,13 +264,37 @@ export default function Home() {
         headers["Authorization"] = `Bearer ${token}`;
       }
 
+      // Convert files to base64 for API
+      const attachments = await Promise.all(
+        attachedFiles.map(async (af) => {
+          const arrayBuffer = await af.file.arrayBuffer();
+          const base64 = btoa(
+            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+          );
+          return {
+            filename: af.file.name,
+            content_type: af.file.type,
+            data: base64,
+            type: af.type,
+          };
+        })
+      );
+
+      // Clear attached files before sending (so UI updates)
+      const currentFiles = [...attachedFiles];
+      setAttachedFiles([]);
+      currentFiles.forEach(f => {
+        if (f.preview) URL.revokeObjectURL(f.preview);
+      });
+
       const response = await axios.post(
         `${API_BASE_URL}/chat`,
         {
-          query: userMessage.content,
+          query: input.trim() || "Please analyze the attached files.",
           language: selectedLanguage.name,
-          generate_images: true,
+          generate_images: attachments.length === 0, // Don't generate images if files attached
           conversation_history: getConversationHistory(),
+          attachments: attachments.length > 0 ? attachments : undefined,
         },
         { headers }
       );
@@ -378,15 +424,6 @@ export default function Home() {
                 <History className="w-5 h-5" />
                 <span className="hidden sm:inline">History</span>
               </button>
-
-              {/* Report Upload - Only show if authenticated */}
-              {isAuthenticated && (
-                <ReportUpload
-                  onAnalysisComplete={(prompt) => {
-                    setInput(prompt);
-                  }}
-                />
-              )}
 
               {/* New Chat Button */}
               {messages.length > 0 && (
@@ -536,6 +573,30 @@ export default function Home() {
                   className={`max-w-[90%] md:max-w-[80%] px-4 py-3 ${message.role === "user" ? "message-user" : "message-assistant"
                     }`}
                 >
+                  {/* File attachments in message */}
+                  {message.attachments && message.attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {message.attachments.map((att, idx) => (
+                        <div
+                          key={idx}
+                          className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs ${att.type === "pdf"
+                            ? "bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                            : "bg-blue-100/50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                            }`}
+                        >
+                          {att.type === "pdf" ? (
+                            <span>📄</span>
+                          ) : att.preview ? (
+                            <img src={att.preview} alt="" className="w-5 h-5 rounded object-cover" />
+                          ) : (
+                            <span>🖼️</span>
+                          )}
+                          <span className="max-w-[100px] truncate">{att.filename}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {message.role === "assistant" ? (
                     <div className="prose prose-sm dark:prose-invert max-w-none">
                       <ReactMarkdown>{message.content}</ReactMarkdown>
@@ -573,37 +634,86 @@ export default function Home() {
 
       {/* Input Area */}
       <div className="sticky bottom-0 bg-white dark:bg-slate-900 border-t border-gray-200 dark:border-slate-700 shadow-lg">
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.jpg,.jpeg,.png,.webp"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = Array.from(e.target.files || []);
+            if (files.length === 0) return;
+
+            const result = validateFiles(attachedFiles, files);
+            if (!result.valid) {
+              setFileError(result.error || "Invalid files");
+              setTimeout(() => setFileError(""), 3000);
+            }
+            if (result.acceptedFiles.length > 0) {
+              setAttachedFiles(prev => [...prev, ...result.acceptedFiles]);
+            }
+            e.target.value = ""; // Reset input
+          }}
+        />
+
+        {/* Attached files display */}
+        <FileAttachments
+          files={attachedFiles}
+          onRemove={(id) => {
+            const file = attachedFiles.find(f => f.id === id);
+            if (file?.preview) URL.revokeObjectURL(file.preview);
+            setAttachedFiles(prev => prev.filter(f => f.id !== id));
+          }}
+        />
+
+        {/* File error message */}
+        {fileError && (
+          <div className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm text-center">
+            {fileError}
+          </div>
+        )}
+
         <div className="container-responsive py-4">
           <div className="flex items-center gap-2 md:gap-3">
-            {/* Upload Button (+) - For authenticated users */}
+            {/* Attach Files Button (+) */}
             <button
               onClick={() => {
                 if (isAuthenticated) {
-                  // Trigger file input (would need a ref to ReportUpload component)
-                  document.getElementById("report-upload-trigger")?.click();
+                  fileInputRef.current?.click();
                 } else {
-                  setLoginModalMessage("Sign in to upload medical reports and get AI-powered analysis.");
+                  setLoginModalMessage("Sign in to attach files and get AI-powered analysis.");
                   setShowLoginModal(true);
                 }
               }}
               className="p-3 rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600 transition-all shadow-md"
-              title="Upload medical report"
+              title="Attach files (PDFs, images)"
             >
               <PlusCircle className="w-5 h-5" />
             </button>
 
             {/* Voice Input Button */}
-            <button
-              onClick={toggleRecording}
-              disabled={!voiceSupported}
-              className={`p-3 rounded-full transition-all ${isListening
-                ? "bg-red-500 text-white animate-pulse"
-                : "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
-                } ${!voiceSupported ? "opacity-50 cursor-not-allowed" : ""}`}
-              title={!voiceSupported ? "Voice input not supported in this browser. Try Chrome or Edge." : isListening ? "Stop recording" : "Start voice input"}
-            >
-              {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-            </button>
+            <div className="relative">
+              {/* Warning tooltip on hover for unsupported browsers */}
+              {!voiceSupported && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-amber-500 text-white text-xs rounded-lg whitespace-nowrap shadow-lg pointer-events-none opacity-0 hover:opacity-100 transition-opacity">
+                  ⚠️ Voice not supported. Use Chrome/Edge.
+                </div>
+              )}
+              <button
+                onClick={toggleRecording}
+                disabled={!voiceSupported}
+                className={`p-3 rounded-full transition-all ${isListening
+                  ? "bg-red-500 text-white animate-pulse"
+                  : voiceSupported
+                    ? "bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-700"
+                    : "bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 cursor-not-allowed"
+                  }`}
+                title={!voiceSupported ? "Voice input not supported. Use Chrome/Edge." : isListening ? "Stop recording" : "Start voice input"}
+              >
+                {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              </button>
+            </div>
 
             {/* Text Input */}
             <div className="flex-1 relative">
@@ -613,7 +723,7 @@ export default function Home() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyPress={handleKeyPress}
-                placeholder={`Ask a medical question in ${selectedLanguage.name}...`}
+                placeholder={attachedFiles.length > 0 ? "Ask about these files..." : `Ask a medical question in ${selectedLanguage.name}...`}
                 className="w-full px-4 py-3 rounded-xl bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                 disabled={isLoading}
               />
@@ -622,7 +732,7 @@ export default function Home() {
             {/* Send Button */}
             <button
               onClick={handleSend}
-              disabled={!input.trim() || isLoading}
+              disabled={(!input.trim() && attachedFiles.length === 0) || isLoading}
               className="p-3 rounded-full gradient-primary text-white disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg transition-all"
               title="Send message"
             >
@@ -642,48 +752,49 @@ export default function Home() {
       </div>
 
       {/* Login Modal for Guest Users */}
-      {showLoginModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in">
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center mx-auto mb-4">
-                <User className="w-8 h-8 text-white" />
+      {
+        showLoginModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 animate-fade-in">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center mx-auto mb-4">
+                  <User className="w-8 h-8 text-white" />
+                </div>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                  Sign In Required
+                </h2>
+                <p className="text-gray-600 dark:text-gray-400">
+                  {loginModalMessage}
+                </p>
               </div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                Sign In Required
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400">
-                {loginModalMessage}
+
+              <div className="flex flex-col gap-3">
+                <Link
+                  href="/login"
+                  className="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl font-medium text-center transition-all"
+                >
+                  Sign In
+                </Link>
+                <Link
+                  href="/signup"
+                  className="w-full py-3 px-4 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-xl font-medium text-center transition-colors"
+                >
+                  Create Free Account
+                </Link>
+                <button
+                  onClick={() => setShowLoginModal(false)}
+                  className="w-full py-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm transition-colors"
+                >
+                  Maybe Later
+                </button>
+              </div>
+
+              <p className="text-xs text-center text-gray-400 mt-4">
+                ✨ Free accounts get unlimited messages, chat history, and personalized health memory
               </p>
             </div>
-
-            <div className="flex flex-col gap-3">
-              <Link
-                href="/login"
-                className="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl font-medium text-center transition-all"
-              >
-                Sign In
-              </Link>
-              <Link
-                href="/signup"
-                className="w-full py-3 px-4 border border-gray-300 dark:border-slate-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-xl font-medium text-center transition-colors"
-              >
-                Create Free Account
-              </Link>
-              <button
-                onClick={() => setShowLoginModal(false)}
-                className="w-full py-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm transition-colors"
-              >
-                Maybe Later
-              </button>
-            </div>
-
-            <p className="text-xs text-center text-gray-400 mt-4">
-              ✨ Free accounts get unlimited messages, chat history, and personalized health memory
-            </p>
           </div>
-        </div>
-      )}
+        )}
     </div>
   );
 }

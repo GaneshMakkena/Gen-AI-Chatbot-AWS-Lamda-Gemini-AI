@@ -135,6 +135,11 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub medibot-images-${AWS::AccountId}-${AWS::Region}-${Environment}
+      # Encryption at rest (audit recommendation)
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         BlockPublicPolicy: false

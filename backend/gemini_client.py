@@ -206,6 +206,97 @@ Then provide your actual response after the thinking section."""
         return None
 
 
+def invoke_llm_with_files(
+    prompt: str,
+    files: List[Dict[str, Any]],
+    context: str = "",
+    thinking_mode: bool = False
+) -> Optional[str]:
+    """
+    Invoke Gemini with file attachments (PDFs, images).
+    
+    Args:
+        prompt: User's query
+        files: List of dicts with 'data' (bytes), 'mime_type', 'filename'
+        context: Additional context
+        thinking_mode: If True, show model reasoning
+    """
+    
+    if not client:
+        print("Gemini client not initialized - missing API key")
+        return None
+    
+    try:
+        from google.genai import types
+        
+        # Build system prompt for file analysis
+        system_prompt = """You are MediBot, an expert medical assistant. You are analyzing medical documents and images provided by the user.
+
+## Your Approach:
+1. **Analyze the attached files** thoroughly - look for key medical information
+2. **Extract important data**: conditions, medications, test results, diagnoses
+3. **Summarize clearly** in simple language the user can understand
+4. **Provide context** about what the values mean
+5. **Suggest follow-up questions** they should ask their doctor
+
+## Guidelines:
+- Be thorough but concise
+- Highlight any abnormal values or concerns
+- Explain medical terms in simple language
+- Always recommend consulting a healthcare professional for medical decisions
+"""
+        
+        if thinking_mode:
+            system_prompt += "\n\nShow your thinking process in <thinking>...</thinking> tags before your response."
+        
+        # Build content parts
+        content_parts = []
+        
+        # Add text prompt
+        full_prompt = f"Context: {context}\n\n{prompt}" if context else prompt
+        content_parts.append(f"{system_prompt}\n\nUser: {full_prompt}")
+        
+        # Add file parts
+        for f in files:
+            try:
+                file_part = types.Part.from_bytes(
+                    data=f["data"],
+                    mime_type=f["mime_type"]
+                )
+                content_parts.append(file_part)
+                print(f"Added file: {f.get('filename', 'unknown')} ({f['mime_type']})")
+            except Exception as e:
+                print(f"Failed to add file {f.get('filename')}: {e}")
+        
+        print(f"Calling Gemini with {len(files)} files (model={LLM_MODEL_ID})")
+        
+        response = client.models.generate_content(
+            model=LLM_MODEL_ID,
+            contents=content_parts,
+        )
+        
+        # Extract text from response
+        response_text = None
+        if response.text:
+            response_text = response.text
+        elif response.parts:
+            for part in response.parts:
+                if hasattr(part, 'text') and part.text:
+                    response_text = part.text
+                    break
+        
+        if response_text:
+            return clean_llm_response(response_text, keep_thinking=thinking_mode)
+        
+        return None
+        
+    except Exception as e:
+        print(f"Error invoking Gemini with files: {e}")
+        import traceback
+        print(traceback.format_exc())
+        return None
+
+
 def generate_image(prompt: str) -> Optional[bytes]:
     """
     Generate an image using Gemini's native image generation.

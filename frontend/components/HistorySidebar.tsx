@@ -102,14 +102,14 @@ export default function HistorySidebar({ onSelectChat, isOpen, onClose }: Histor
 
     return (
         <>
-            {/* Overlay */}
+            {/* Overlay - click to close */}
             <div
-                className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+                className="fixed inset-0 bg-black/50 z-[100]"
                 onClick={onClose}
             />
 
-            {/* Sidebar */}
-            <div className={`fixed top-0 left-0 h-full w-80 bg-white dark:bg-slate-900 shadow-2xl z-50 transform transition-transform duration-300 ${isOpen ? "translate-x-0" : "-translate-x-full"}`}>
+            {/* Sidebar - z-[101] to be above overlay and page header */}
+            <div className={`fixed top-0 left-0 h-full w-80 bg-white dark:bg-slate-900 shadow-2xl z-[101] transform transition-transform duration-300 ${isOpen ? "translate-x-0" : "-translate-x-full"}`}>
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-slate-700">
                     <div className="flex items-center gap-2">
@@ -118,9 +118,10 @@ export default function HistorySidebar({ onSelectChat, isOpen, onClose }: Histor
                     </div>
                     <button
                         onClick={onClose}
-                        className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                        className="p-2 bg-gray-100 dark:bg-slate-800 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors group"
+                        title="Close sidebar"
                     >
-                        <X className="w-5 h-5 text-gray-500" />
+                        <X className="w-5 h-5 text-gray-600 dark:text-gray-400 group-hover:text-red-500" />
                     </button>
                 </div>
 

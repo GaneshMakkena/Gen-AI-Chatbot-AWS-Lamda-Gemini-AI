@@ -73,12 +73,20 @@ app.add_middleware(
 
 
 # Request/Response Models
+class Attachment(BaseModel):
+    filename: str
+    content_type: str
+    data: str  # Base64 encoded file data
+    type: str  # "pdf" or "image"
+
+
 class ChatRequest(BaseModel):
     query: str
     language: str = "English"
     generate_images: bool = True
     conversation_history: Optional[List[Dict[str, str]]] = None  # For multi-turn chat
     thinking_mode: bool = False  # Show AI reasoning process
+    attachments: Optional[List[Attachment]] = None  # File attachments
 
 
 class StepImage(BaseModel):
@@ -185,9 +193,40 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
             # Prepend health context to conversation context
             context = health_context + "\n" + context
     
-    # Get LLM response with in-depth research
-    print(f"Processing query: {english_query[:100]}... (thinking_mode={request.thinking_mode})")
-    response = invoke_llm(english_query, context=context, thinking_mode=request.thinking_mode)
+    # Process file attachments if present
+    response = None
+    if request.attachments and len(request.attachments) > 0:
+        print(f"Processing {len(request.attachments)} attachments")
+        
+        # Import multimodal function
+        from gemini_client import invoke_llm_with_files
+        
+        # Decode base64 files
+        file_parts = []
+        for att in request.attachments:
+            try:
+                file_bytes = base64.b64decode(att.data)
+                file_parts.append({
+                    "data": file_bytes,
+                    "mime_type": att.content_type,
+                    "filename": att.filename
+                })
+            except Exception as e:
+                print(f"Failed to decode attachment {att.filename}: {e}")
+        
+        if file_parts:
+            # Call multimodal LLM with files
+            response = invoke_llm_with_files(
+                english_query,
+                file_parts,
+                context=context,
+                thinking_mode=request.thinking_mode
+            )
+    
+    # Standard LLM call (no attachments)
+    if not response:
+        print(f"Processing query: {english_query[:100]}... (thinking_mode={request.thinking_mode})")
+        response = invoke_llm(english_query, context=context, thinking_mode=request.thinking_mode)
     
     if not response:
         raise HTTPException(status_code=500, detail="Failed to get response from AI")
