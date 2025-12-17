@@ -9,8 +9,10 @@ A modern, AI-powered medical assistant chatbot with multimodal capabilities, ste
 
 ## ✨ Features
 
+## ✨ Features
+
 - 🤖 **Google Gemini 2.5 Pro** for accurate medical advice & reasoning
-- 🖼️ **Step-by-Step Visual Guides** - AI generates distinct illustrations for each treatment step
+- 🖼️ **Gemini 2.5 Flash Image** for Step-by-Step Visual Guides (4-Panel Grid Layout)
 - 📎 **Large File Analysis** - Upload PDFs/Images (up to 50MB) via S3 for AI analysis
 - 🔐 **Secure Authentication** - AWS Cognito (Sign up, Sign in, Password Reset)
 - 💾 **Persisted History** - Chats are saved to DynamoDB and can be reloaded
@@ -24,41 +26,23 @@ A modern, AI-powered medical assistant chatbot with multimodal capabilities, ste
 
 **Frontend**: [https://d17eixu2k5iihu.cloudfront.net](https://d17eixu2k5iihu.cloudfront.net)
 
-**Test User**: `moggalogroup@gmail.com` / `Moggalo@69` (or sign up)
+_(Sign up to create your own secure account)_
 
 ---
 
 ## 🏗️ Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     AWS CloudFront                          │
-│              https://d17eixu2k5iihu.cloudfront.net         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-          ┌───────────────────┴───────────────────┐
-          │                                       │
-          ▼                                       ▼
-┌──────────────────┐                   ┌───────────────────┐
-│  S3 (Frontend)   │                   │   API Gateway     │
-│  Vite/React App  │                   │   REST API        │
-└──────────────────┘                   └───────────────────┘
-                                                 │
-                                                 ▼
-                                       ┌───────────────────┐
-                                       │  Lambda Function  │
-                                       │  FastAPI + Python │
-                                       └───────────────────┘
-                                                 │
-                    ┌────────────────────────────┼────────────────────────────┐
-                    │                            │                            │
-                    ▼                            ▼                            ▼
-          ┌──────────────┐            ┌──────────────┐            ┌──────────────┐
-          │   Cognito    │            │   DynamoDB   │            │  Google      │
-          │  User Pool   │            │ (Profiles +  │            │  Gemini AI   │
-          └──────────────┘            │   History)   │            └──────────────┘
-                                      └──────────────┘
-```
+The application follows a **Serverless Event-Driven Architecture**:
+
+1.  **Frontend (React + Vite)**: Hosted on S3 and served via **CloudFront** (CDN) for global low-latency access.
+2.  **API Gateway & Lambda**: Handles REST requests. Heavy tasks (like Image Gen) use **Lambda Function URLs** to bypass the 29s Gateway timeout.
+3.  **AI Layer (Google Gemini)**:
+    *   **Text/Reasoning**: Uses `gemini-2.5-pro` for high-quality medical instructions.
+    *   **Image Generation**: Uses `gemini-2.5-flash-image` to generate 4-panel instructional diagrams in real-time.
+4.  **Storage**:
+    *   **DynamoDB**: Stores chat history (conversations) and user health profiles (RAG context).
+    *   **S3**: Stores generated images and user-uploaded reports (encrypted).
+5.  **Authentication**: **AWS Cognito** provides industry-standard identity management (JWT).
 
 ---
 
