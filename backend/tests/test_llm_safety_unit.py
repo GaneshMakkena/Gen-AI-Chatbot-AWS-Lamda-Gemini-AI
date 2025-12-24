@@ -3,7 +3,7 @@ Unit tests for llm_safety.py - LLM safety checks.
 Tests prompt injection detection, output validation, and sanitization.
 """
 
-import pytest
+
 from llm_safety import (
     detect_prompt_injection,
     validate_output,
