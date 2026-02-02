@@ -11,6 +11,7 @@ import { useChatState } from '../hooks/useChatState';
 import { sendChatMessage, getPresignedUrl, uploadFileToS3, getChat, ApiError } from '../api/client';
 import { StepCard } from './StepCard';
 import type { ChatResponse, ConversationMessage } from '../types/api';
+import { formatMarkdown, sanitizeHtml } from '../utils/markdown';
 import './ChatInterface.css';
 
 interface Message {
@@ -97,6 +98,7 @@ function GuestLimitModal() {
 function ResponseDisplay({ response }: { response: ChatResponse }) {
     const stepImages = response.step_images || [];
     const hasDegradedImages = stepImages.some(img => img.image_failed);
+    const safeHtml = sanitizeHtml(formatMarkdown(response.answer));
 
     return (
         <div className="response-display">
@@ -108,7 +110,7 @@ function ResponseDisplay({ response }: { response: ChatResponse }) {
             )}
 
             <div className="response-text">
-                <div dangerouslySetInnerHTML={{ __html: formatMarkdown(response.answer) }} />
+                <div dangerouslySetInnerHTML={{ __html: safeHtml }} />
             </div>
 
             {stepImages.length > 0 && (
@@ -126,21 +128,6 @@ function ResponseDisplay({ response }: { response: ChatResponse }) {
             )}
         </div>
     );
-}
-
-// Simple markdown formatting (bold, headers, lists)
-function formatMarkdown(text: string): string {
-    return text
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/^### (.+)$/gm, '<h4>$1</h4>')
-        .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^# (.+)$/gm, '<h2>$1</h2>')
-        .replace(/^- (.+)$/gm, '<li>$1</li>')
-        .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-        .replace(/\n\n/g, '</p><p>')
-        .replace(/^/, '<p>')
-        .replace(/$/, '</p>')
-        .replace(/<p><\/p>/g, '');
 }
 
 export function ChatInterface() {

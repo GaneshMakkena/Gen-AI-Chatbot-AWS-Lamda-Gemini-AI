@@ -1,0 +1,12 @@
+[
+ {
+  "op": "add",
+  "path": "/properties/FunctionName/maxLength",
+  "value": 256
+ },
+ {
+  "op": "add",
+  "path": "/properties/FunctionName/minLength",
+  "value": 1
+ }
+]

@@ -18,6 +18,7 @@ export interface StepImage {
   image_prompt?: string | null;
   image?: string | null;           // Base64 (fallback for local dev)
   image_url?: string | null;       // S3 URL (production)
+  s3_key?: string | null;          // S3 key (history regeneration)
   is_composite: boolean;
   panel_index?: number | null;
   image_failed: boolean;

@@ -1,0 +1,26 @@
+[pytest]
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+addopts = -v --tb=short --strict-markers
+markers =
+    unit: Unit tests with mocked dependencies
+    integration: Integration tests against real AWS services
+    slow: Tests that take longer than 5 seconds
+
+[coverage:run]
+source = .
+omit = 
+    tests/*
+    .venv/*
+    __pycache__/*
+    lambda_handler.py
+
+[coverage:report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+fail_under = 85
+show_missing = true
