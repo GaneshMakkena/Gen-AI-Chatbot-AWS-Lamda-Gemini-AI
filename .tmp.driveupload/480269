@@ -1,1 +1,0 @@
-"""CloudFormation attributes module."""
