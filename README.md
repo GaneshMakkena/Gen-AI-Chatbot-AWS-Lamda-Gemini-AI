@@ -9,14 +9,14 @@ A modern, AI-powered medical assistant chatbot with multimodal capabilities, ste
 
 ## ✨ Features
 
-## ✨ Features
-
 - 🤖 **Google Gemini 2.5 Pro** for accurate medical advice & reasoning
 - 🖼️ **Gemini 2.5 Flash Image** for Step-by-Step Visual Guides (4-Panel Grid Layout)
 - 📎 **Large File Analysis** - Upload PDFs/Images (up to 50MB) via S3 for AI analysis
 - 🔐 **Secure Authentication** - AWS Cognito (Sign up, Sign in, Password Reset)
 - 💾 **Persisted History** - Chats are saved to DynamoDB and can be reloaded
 - 🏥 **Health Profile** - Stores conditions, medications, and allergies for personalized context
+- 🛡️ **Safety Filters** - Input/output safety checks with fallback responses
+- 🧩 **Resilient Visuals** - Step image fallbacks + S3 URL regeneration for history
 - ⚡ **High Performance** - CloudFront caching + Lambda Function URLs for speed
 - 👤 **Guest Mode** - Public access with a 3-message trial limit (no login required)
 - 📱 **Responsive Design** - Mobile-first UI built with React & Vanilla CSS
@@ -95,14 +95,14 @@ The application follows a **Serverless Event-Driven Architecture**:
 
 ### Prerequisites
 - Node.js 18+
-- Python 3.11
+- Python 3.11 (required for SAM build/runtime)
 - AWS CLI configured
 - SAM CLI installed
 
 ### Backend
 ```bash
 cd backend
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn api_server:app --reload --port 8000
@@ -121,6 +121,13 @@ Create `.env` in the root:
 GOOGLE_API_KEY=your_gemini_api_key
 ```
 
+For local frontend auth, create `frontend/.env`:
+```env
+VITE_API_URL=http://localhost:8000
+VITE_COGNITO_USER_POOL_ID=your_pool_id
+VITE_COGNITO_CLIENT_ID=your_client_id
+```
+
 ---
 
 ## ☁️ Deployment
@@ -135,6 +142,32 @@ We use a unified deployment script that handles:
 # Deploy entire stack
 export GOOGLE_API_KEY="your_key"
 ./deploy.sh
+```
+
+Notes:
+- `sam build` requires Python 3.11 on your PATH.
+- Integration tests in `backend/tests/test_all_features.py` require live AWS access (see Testing).
+
+---
+
+## ✅ Testing
+
+### Backend
+```bash
+cd backend
+source .venv/bin/activate
+pytest -q
+```
+
+Run live integration tests:
+```bash
+RUN_INTEGRATION_TESTS=1 pytest tests/test_all_features.py -q
+```
+
+### Frontend
+```bash
+cd frontend
+npm run test:run
 ```
 
 ---
