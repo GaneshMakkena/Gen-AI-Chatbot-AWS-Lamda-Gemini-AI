@@ -1,0 +1,778 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: MediBot - AI Medical Chatbot with Step-by-Step Visual Instructions
+Globals:
+  Function:
+    Timeout: 300
+    MemorySize: 1536
+Parameters:
+  GoogleApiKey:
+    Type: String
+    NoEcho: true
+    Description: Google AI API Key for Gemini models
+  GeminiLlmModel:
+    Type: String
+    Default: gemini-2.5-pro
+    Description: Gemini Model ID for LLM (text generation)
+  GeminiFastModel:
+    Type: String
+    Default: gemini-2.0-flash
+    Description: Fast model ID for simple queries (greetings, basic FAQ)
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+    - production
+    - staging
+    Description: Deployment environment
+  FrontendDomain:
+    Type: String
+    Default: ''
+    Description: CloudFront domain for frontend (e.g. d17eixu2k5iihu.cloudfront.net).
+      Leave empty to use auto-generated domain.
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Email address for CloudWatch alarm notifications. Leave empty to
+      skip SNS setup.
+Conditions:
+  HasFrontendDomain:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: FrontendDomain
+      - ''
+  HasAlarmEmail:
+    Fn::Not:
+    - Fn::Equals:
+      - Ref: AlarmEmail
+      - ''
+Resources:
+  MediBotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: medibot-api-${Environment}
+      CodeUri: s3://medibot-production-cf-artifacts/bce900f4b5dd1a0b088b6b5448058627
+      Handler: lambda_handler.handler
+      Runtime: python3.11
+      Timeout: 300
+      MemorySize: 1536
+      Architectures:
+      - x86_64
+      Tracing: Active
+      Environment:
+        Variables:
+          GOOGLE_API_KEY:
+            Ref: GoogleApiKey
+          GEMINI_LLM_MODEL:
+            Ref: GeminiLlmModel
+          GEMINI_FAST_MODEL:
+            Ref: GeminiFastModel
+          ENVIRONMENT:
+            Ref: Environment
+          IMAGES_BUCKET:
+            Ref: ImagesBucket
+          IMAGES_CDN_URL:
+            Fn::Sub: https://${ImagesDistribution.DomainName}
+          FRONTEND_DOMAIN:
+            Fn::If:
+            - HasFrontendDomain
+            - Ref: FrontendDomain
+            - Fn::GetAtt:
+              - CloudFrontDistribution
+              - DomainName
+          COGNITO_USER_POOL_ID:
+            Ref: UserPool
+          COGNITO_CLIENT_ID:
+            Ref: UserPoolClient
+          CHAT_TABLE:
+            Ref: ChatHistoryTable
+          REPORTS_BUCKET:
+            Ref: ReportsBucket
+          HEALTH_PROFILE_TABLE:
+            Ref: HealthProfileTable
+          GUEST_TABLE:
+            Ref: GuestSessionsTable
+          AUDIT_TABLE:
+            Ref: AuditLogTable
+          RATE_LIMIT_TABLE:
+            Ref: RateLimitTable
+          RESPONSE_CACHE_TABLE:
+            Ref: ResponseCacheTable
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - s3:PutObject
+          - s3:GetObject
+          Resource:
+            Fn::Sub: ${ImagesBucket.Arn}/*
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:Query
+          - dynamodb:DeleteItem
+          - dynamodb:UpdateItem
+          Resource:
+          - Fn::GetAtt:
+            - ChatHistoryTable
+            - Arn
+          - Fn::Sub: ${ChatHistoryTable.Arn}/index/*
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+          Resource:
+          - Fn::GetAtt:
+            - HealthProfileTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:UpdateItem
+          - dynamodb:DeleteItem
+          - dynamodb:Scan
+          Resource:
+          - Fn::GetAtt:
+            - GuestSessionsTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          - dynamodb:Query
+          - dynamodb:Scan
+          Resource:
+          - Fn::GetAtt:
+            - AuditLogTable
+            - Arn
+          - Fn::Sub: ${AuditLogTable.Arn}/index/*
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          - dynamodb:GetItem
+          - dynamodb:DeleteItem
+          Resource:
+          - Fn::GetAtt:
+            - ResponseCacheTable
+            - Arn
+        - Effect: Allow
+          Action:
+          - s3:PutObject
+          - s3:GetObject
+          - s3:DeleteObject
+          Resource:
+            Fn::Sub: ${ReportsBucket.Arn}/*
+      Events:
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+            ApiId:
+              Ref: MediBotApi
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            ApiId:
+              Ref: MediBotApi
+  MediBotApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName:
+        Ref: Environment
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
+      CorsConfiguration:
+        AllowOrigins:
+        - Fn::If:
+          - HasFrontendDomain
+          - Fn::Sub: https://${FrontendDomain}
+          - Fn::Sub: https://${CloudFrontDistribution.DomainName}
+        AllowMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        AllowHeaders:
+        - Content-Type
+        - Authorization
+        - X-Requested-With
+        MaxAge: 86400
+  ImagesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: medibot-images-${AWS::AccountId}-${AWS::Region}-${Environment}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+        - Id: DeleteOldImages
+          Status: Enabled
+          ExpirationInDays: 1
+  ImagesOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name:
+          Fn::Sub: medibot-images-oac-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  ImagesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: ImagesBucket
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: cloudfront.amazonaws.com
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: ${ImagesBucket.Arn}/*
+          Condition:
+            StringEquals:
+              AWS:SourceArn:
+                Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${ImagesDistribution}
+  ImagesDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+        - Id: ImagesBucketOrigin
+          DomainName:
+            Fn::GetAtt:
+            - ImagesBucket
+            - RegionalDomainName
+          OriginAccessControlId:
+            Ref: ImagesOAC
+          S3OriginConfig:
+            OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: ImagesBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName:
+        Fn::Sub: medibot-users-${Environment}
+      AutoVerifiedAttributes:
+      - email
+      UsernameAttributes:
+      - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+      - Name: email
+        Required: true
+        Mutable: true
+      - Name: name
+        Required: false
+        Mutable: true
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName:
+        Fn::Sub: medibot-web-${Environment}
+      UserPoolId:
+        Ref: UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+      - ALLOW_USER_PASSWORD_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+      - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders:
+      - COGNITO
+      CallbackURLs:
+      - Fn::If:
+        - HasFrontendDomain
+        - Fn::Sub: https://${FrontendDomain}
+        - Fn::Sub: https://${CloudFrontDistribution.DomainName}
+      - http://localhost:3000
+      LogoutURLs:
+      - Fn::If:
+        - HasFrontendDomain
+        - Fn::Sub: https://${FrontendDomain}
+        - Fn::Sub: https://${CloudFrontDistribution.DomainName}
+      - http://localhost:3000
+      AllowedOAuthFlows:
+      - code
+      - implicit
+      AllowedOAuthScopes:
+      - email
+      - openid
+      - profile
+      AllowedOAuthFlowsUserPoolClient: true
+  ChatHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: medibot-chats-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: user_id
+        AttributeType: S
+      - AttributeName: chat_id
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: N
+      KeySchema:
+      - AttributeName: user_id
+        KeyType: HASH
+      - AttributeName: chat_id
+        KeyType: RANGE
+      LocalSecondaryIndexes:
+      - IndexName: timestamp-index
+        KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+  HealthProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: medibot-health-profiles-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: user_id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: user_id
+        KeyType: HASH
+  GuestSessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: medibot-guest-sessions-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: guest_id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: guest_id
+        KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+  AuditLogTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: medibot-audit-logs-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: event_id
+        AttributeType: S
+      - AttributeName: user_id
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: N
+      KeySchema:
+      - AttributeName: event_id
+        KeyType: HASH
+      GlobalSecondaryIndexes:
+      - IndexName: user-id-index
+        KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+  AlarmNotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      TopicName:
+        Fn::Sub: ${AWS::StackName}-alarms
+      Subscription:
+      - Protocol: email
+        Endpoint:
+          Ref: AlarmEmail
+  ApiErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-api-5xx-errors
+      AlarmDescription: Alert when API returns too many 5xx errors
+      Namespace: MediBot
+      MetricName: Api5xxErrors
+      Dimensions:
+      - Name: Environment
+        Value:
+          Ref: Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+      OKActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+  LlmErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-llm-errors
+      AlarmDescription: Alert when LLM service has too many errors
+      Namespace: MediBot
+      MetricName: LlmErrors
+      Dimensions:
+      - Name: Environment
+        Value:
+          Ref: Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+      OKActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+  GuestLimitAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-guest-limit-hits
+      AlarmDescription: Alert when many guests hit trial limit (potential abuse)
+      Namespace: MediBot
+      MetricName: GuestTrialLimitHit
+      Dimensions:
+      - Name: Environment
+        Value:
+          Ref: Environment
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+      OKActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+  HighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:
+        Fn::Sub: ${AWS::StackName}-high-latency
+      AlarmDescription: Alert when chat API latency is too high
+      Namespace: MediBot
+      MetricName: ChatLatencyMs
+      Dimensions:
+      - Name: Environment
+        Value:
+          Ref: Environment
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 30000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+      OKActions:
+        Fn::If:
+        - HasAlarmEmail
+        - - Ref: AlarmNotificationTopic
+        - []
+  RateLimitTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: medibot-rate-limits-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: user_id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: user_id
+        KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+  ResponseCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: medibot-response-cache-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: cache_key
+        AttributeType: S
+      KeySchema:
+      - AttributeName: cache_key
+        KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: medibot-reports-${AWS::AccountId}-${AWS::Region}-${Environment}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+        - AllowedHeaders:
+          - '*'
+          AllowedMethods:
+          - GET
+          - PUT
+          - POST
+          AllowedOrigins:
+          - Fn::If:
+            - HasFrontendDomain
+            - Fn::Sub: https://${FrontendDomain}
+            - Fn::Sub: https://${CloudFrontDistribution.DomainName}
+          - http://localhost:3000
+          MaxAge: 3600
+      LifecycleConfiguration:
+        Rules:
+        - Id: DeleteOldReports
+          Status: Enabled
+          ExpirationInDays: 30
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: medibot-frontend-${AWS::AccountId}-${AWS::Region}-${Environment}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: 404.html
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name:
+          Fn::Sub: medibot-frontend-oac-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: FrontendBucket
+      PolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: cloudfront.amazonaws.com
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: ${FrontendBucket.Arn}/*
+          Condition:
+            StringEquals:
+              AWS:SourceArn:
+                Fn::Sub: arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+        - Id: S3Origin
+          DomainName:
+            Fn::GetAtt:
+            - FrontendBucket
+            - RegionalDomainName
+          OriginAccessControlId:
+            Ref: FrontendOAC
+          S3OriginConfig:
+            OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        CustomErrorResponses:
+        - ErrorCode: 404
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+        - ErrorCode: 403
+          ResponseCode: 200
+          ResponsePagePath: /index.html
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+Outputs:
+  ApiUrl:
+    Description: API Gateway URL for the MediBot backend
+    Value:
+      Fn::Sub: https://${MediBotApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-ApiUrl
+  FrontendBucketName:
+    Description: S3 bucket for frontend static files
+    Value:
+      Ref: FrontendBucket
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-FrontendBucket
+  CloudFrontUrl:
+    Description: CloudFront distribution URL for the frontend
+    Value:
+      Fn::Sub: https://${CloudFrontDistribution.DomainName}
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-CloudFrontUrl
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID (for cache invalidation)
+    Value:
+      Ref: CloudFrontDistribution
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-CloudFrontDistributionId
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID for authentication
+    Value:
+      Ref: UserPool
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-UserPoolId
+  CognitoClientId:
+    Description: Cognito App Client ID for frontend
+    Value:
+      Ref: UserPoolClient
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-UserPoolClientId
+  CognitoRegion:
+    Description: AWS Region for Cognito
+    Value:
+      Ref: AWS::Region
+  ChatHistoryTableName:
+    Description: DynamoDB table for chat history
+    Value:
+      Ref: ChatHistoryTable
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-ChatTable
+  ReportsBucketName:
+    Description: S3 bucket for medical reports
+    Value:
+      Ref: ReportsBucket
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-ReportsBucket
+  HealthProfileTableName:
+    Description: DynamoDB table for health profiles (RAG memory)
+    Value:
+      Ref: HealthProfileTable
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-HealthProfileTable
+  GuestSessionsTableName:
+    Description: DynamoDB table for guest session tracking
+    Value:
+      Ref: GuestSessionsTable
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-GuestSessionsTable
+  AuditLogTableName:
+    Description: DynamoDB table for audit logs
+    Value:
+      Ref: AuditLogTable
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-AuditLogTable
+  FrontendDomainOutput:
+    Description: Frontend domain name
+    Value:
+      Fn::GetAtt:
+      - CloudFrontDistribution
+      - DomainName
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-FrontendDomain
+  ImagesCdnUrl:
+    Description: CloudFront URL for generated images
+    Value:
+      Fn::Sub: https://${ImagesDistribution.DomainName}
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-ImagesCdnUrl
+  RateLimitTableName:
+    Description: DynamoDB table for rate limiting
+    Value:
+      Ref: RateLimitTable
+    Export:
+      Name:
+        Fn::Sub: ${AWS::StackName}-RateLimitTable

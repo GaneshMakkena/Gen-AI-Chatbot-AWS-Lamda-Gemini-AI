@@ -15,6 +15,10 @@ venv/
 out/
 dist/
 build/
+.deploy/
+.aws-sam/
+package/
+packaged.yaml
 
 # IDE
 .idea/
@@ -29,6 +33,10 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Temporary local upload artifacts
+.tmp.driveupload/
+.tmp.drivedownload/
 
 # Testing
 coverage/

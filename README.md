@@ -10,7 +10,10 @@ A modern, AI-powered medical assistant chatbot with multimodal capabilities, ste
 ## ✨ Features
 
 - 🤖 **Google Gemini 2.5 Pro** for accurate medical advice & reasoning
+- ⚡ **Intelligent Model Routing** - Simple queries use **Gemini 2.0 Flash** for speed & cost efficiency
 - 🖼️ **Gemini 2.5 Flash Image** for Step-by-Step Visual Guides (4-Panel Grid Layout)
+- 🌍 **Multi-language Support** - Full UI & Chat in English, Telugu, Hindi, and Spanish
+- 📄 **Export as PDF** - Download complete conversation history with images for offline reference
 - 📎 **Large File Analysis** - Upload PDFs/Images (up to 50MB) via S3 for AI analysis
 - 🔐 **Secure Authentication** - AWS Cognito (Sign up, Sign in, Password Reset)
 - 💾 **Persisted History** - Chats are saved to DynamoDB and can be reloaded
@@ -35,15 +38,53 @@ _(Sign up to create your own secure account)_
 
 The application follows a **Serverless Event-Driven Architecture**:
 
-1.  **Frontend (React + Vite)**: Hosted on S3 and served via **CloudFront** (CDN) for global low-latency access.
-2.  **API Gateway & Lambda**: Handles REST requests. Heavy tasks (like Image Gen) use **Lambda Function URLs** to bypass the 29s Gateway timeout.
-3.  **AI Layer (Google Gemini)**:
-    *   **Text/Reasoning**: Uses `gemini-2.5-pro` for high-quality medical instructions.
-    *   **Image Generation**: Uses `gemini-2.5-flash-image` to generate 4-panel instructional diagrams in real-time.
-4.  **Storage**:
-    *   **DynamoDB**: Stores chat history (conversations) and user health profiles (RAG context).
-    *   **S3**: Stores generated images and user-uploaded reports (encrypted).
-5.  **Authentication**: **AWS Cognito** provides industry-standard identity management (JWT).
+```mermaid
+graph TB
+    subgraph Frontend
+        A["React + Vite (CloudFront CDN)"]
+    end
+
+    subgraph AWS API Layer
+        B[API Gateway / Lambda Function URL]
+        C[Lambda - FastAPI + Mangum]
+    end
+
+    subgraph AI Layer
+        D["Gemini 2.5 Pro (Text/Reasoning)"]
+        E["Gemini 2.5 Flash (Image Gen)"]
+    end
+
+    subgraph Storage
+        F[(DynamoDB - Chats)]
+        G[(DynamoDB - Health Profiles)]
+        H[S3 - Images]
+        I[S3 - Reports]
+    end
+
+    subgraph Auth
+        J[AWS Cognito]
+    end
+
+    A -->|HTTPS| B --> C
+    C --> D & E
+    C --> F & G & H & I
+    A -->|JWT| J
+    C -->|Verify| J
+```
+
+1.  **Frontend (React + Vite)**: Hosted on S3, served via **CloudFront CDN**.
+2.  **API Gateway & Lambda**: REST API. Heavy tasks use **Lambda Function URLs** to bypass 29s timeout.
+3.  **AI Layer**: **Model Router** directs simple queries to `gemini-2.0-flash` (fast/cheap) and complex queries to `gemini-2.5-pro` (reasoning). Image generation uses `gemini-2.5-flash`.
+4.  **Storage**: DynamoDB (chats, profiles), S3 (images via CloudFront OAC, encrypted reports).
+5.  **Authentication**: **AWS Cognito** with JWT validation.
+
+---
+
+## 📚 API Documentation
+
+When running locally, interactive API docs are available at:
+- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
 ---
 
@@ -66,9 +107,17 @@ The application follows a **Serverless Event-Driven Architecture**:
 
 ```
 ├── backend/                 # Python FastAPI (Lambda)
-│   ├── api_server.py       # Main API endpoints & logic
+│   ├── api_server.py       # App entry point & router wiring
+│   ├── routes/             # Route modules
+│   │   ├── chat.py         # /chat, /generate-image
+│   │   ├── auth_routes.py  # /auth/*, /guest/*
+│   │   ├── history.py      # /history
+│   │   ├── profile.py      # /profile, /analyze-report
+│   │   └── upload.py       # /upload-report, /upload/presigned-url
+│   ├── models/             # Pydantic request/response models
+│   ├── dependencies.py     # FastAPI Depends (auth, client info)
 │   ├── gemini_client.py    # Gemini AI & Image generation
-│   ├── auth.py             # Cognito token verification
+│   ├── auth.py             # Cognito JWT verification
 │   ├── health_profile.py   # RAG for user health data
 │   ├── report_analyzer.py  # Multimodal file analysis
 │   └── chat_history.py     # DynamoDB operations
@@ -86,6 +135,7 @@ The application follows a **Serverless Event-Driven Architecture**:
 │   └── template.yaml      # CloudFormation template
 │
 ├── deploy.sh               # Automated deployment script
+├── CONTRIBUTING.md         # Contribution guidelines
 └── README.md
 ```
 
@@ -139,9 +189,12 @@ We use a unified deployment script that handles:
 4. S3 Upload & CloudFront Invalidation
 
 ```bash
-# Deploy entire stack
+# Deploy to Production (default)
 export GOOGLE_API_KEY="your_key"
 ./deploy.sh
+
+# Deploy to Staging
+./deploy.sh staging
 ```
 
 Notes:
@@ -178,6 +231,14 @@ npm run test:run
 - **Data Encryption**: S3 buckets and DynamoDB tables encrypted at rest (AES-256).
 - **Authentication**: JWT validation for all personalized endpoints.
 - **Presigned URLs**: Secure, time-limited access for file uploads.
+- **CloudFront OAC**: Images bucket secured via Origin Access Control (no public S3 access).
+- **Dependency Scanning**: `pip-audit` runs in CI to catch known vulnerabilities.
+
+---
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
 ---
 

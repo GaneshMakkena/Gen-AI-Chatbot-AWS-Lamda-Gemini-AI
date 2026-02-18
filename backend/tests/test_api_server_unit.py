@@ -67,15 +67,15 @@ class TestHealthEndpoint:
         mock_answer = "Here is some medical advice..."
 
         # Patching the new functions used in api_server.chat
-        with patch("api_server.check_input_safety") as mock_safety, \
-             patch("api_server.check_output_safety") as mock_output_safety, \
-             patch("api_server.invoke_llm") as mock_llm, \
-             patch("api_server.extract_treatment_steps") as mock_steps, \
-             patch("api_server.detect_medical_topic") as mock_topic, \
-             patch("api_server.generate_all_step_images") as mock_images, \
-             patch("api_server.check_guest_limit") as mock_check_guest, \
-             patch("api_server.increment_guest_message") as mock_increment_guest, \
-             patch("api_server.log_guest_event") as mock_log_guest:
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.extract_treatment_steps") as mock_steps, \
+             patch("routes.chat.detect_medical_topic") as mock_topic, \
+             patch("routes.chat.generate_all_step_images") as mock_images, \
+             patch("routes.chat.check_guest_limit") as mock_check_guest, \
+             patch("routes.chat.increment_guest_message") as mock_increment_guest, \
+             patch("routes.chat.log_guest_event") as mock_log_guest:
 
             mock_safety.return_value = (True, "How to treat a headache?", None)
             mock_output_safety.return_value = (True, mock_answer, None)
@@ -101,15 +101,15 @@ class TestHealthEndpoint:
         """Test that response includes original query."""
         from api_server import app
 
-        with patch("api_server.check_input_safety") as mock_safety, \
-             patch("api_server.check_output_safety") as mock_output_safety, \
-             patch("api_server.invoke_llm") as mock_llm, \
-             patch("api_server.extract_treatment_steps") as mock_steps, \
-             patch("api_server.detect_medical_topic") as mock_topic, \
-             patch("api_server.generate_all_step_images") as mock_images, \
-             patch("api_server.check_guest_limit") as mock_check_guest, \
-             patch("api_server.increment_guest_message") as mock_increment_guest, \
-             patch("api_server.log_guest_event") as mock_log_guest:
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.extract_treatment_steps") as mock_steps, \
+             patch("routes.chat.detect_medical_topic") as mock_topic, \
+             patch("routes.chat.generate_all_step_images") as mock_images, \
+             patch("routes.chat.check_guest_limit") as mock_check_guest, \
+             patch("routes.chat.increment_guest_message") as mock_increment_guest, \
+             patch("routes.chat.log_guest_event") as mock_log_guest:
 
             mock_safety.return_value = (True, "Test query", None)
             mock_output_safety.return_value = (True, "Answer", None)
@@ -133,15 +133,15 @@ class TestHealthEndpoint:
         """Test that chat is saved for authenticated users."""
         from api_server import app
 
-        with patch("api_server.check_input_safety") as mock_safety, \
-             patch("api_server.check_output_safety") as mock_output_safety, \
-             patch("api_server.invoke_llm") as mock_llm, \
-             patch("api_server.extract_treatment_steps") as mock_steps, \
-             patch("api_server.detect_medical_topic") as mock_topic, \
-             patch("api_server.generate_all_step_images") as mock_images, \
-             patch("api_server.get_user_info") as mock_auth, \
-             patch("api_server.save_chat") as mock_save, \
-             patch("api_server.get_context_summary") as mock_context:
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.extract_treatment_steps") as mock_steps, \
+             patch("routes.chat.detect_medical_topic") as mock_topic, \
+             patch("routes.chat.generate_all_step_images") as mock_images, \
+             patch("dependencies.get_user_info") as mock_auth, \
+             patch("routes.chat.save_chat") as mock_save, \
+             patch("routes.chat.get_context_summary") as mock_context:
 
             mock_safety.return_value = (True, "Test query", None)
             mock_output_safety.return_value = (True, "Answer", None)
@@ -163,6 +163,114 @@ class TestHealthEndpoint:
             assert response.status_code == 200
             mock_save.assert_called_once()
 
+    def test_chat_skips_health_context_for_simple_greeting(self):
+        """Simple greeting should not inject heavy health profile context."""
+        from api_server import app
+
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.extract_treatment_steps") as mock_steps, \
+             patch("routes.chat.detect_medical_topic") as mock_topic, \
+             patch("routes.chat.generate_all_step_images") as mock_images, \
+             patch("dependencies.get_user_info") as mock_auth, \
+             patch("routes.chat.save_chat") as mock_save, \
+             patch("routes.chat.get_context_summary") as mock_context:
+
+            mock_safety.return_value = (True, "Hi", None)
+            mock_output_safety.return_value = (True, "Hello! How can I help?", None)
+            mock_llm.return_value = "Hello! How can I help?"
+            mock_steps.return_value = []
+            mock_topic.return_value = "General"
+            mock_images.return_value = []
+            mock_auth.return_value = {"user_id": "user-123", "email": "test@test.com"}
+            mock_save.return_value = {"chat_id": "chat-123"}
+            mock_context.return_value = "Patient has chronic conditions..."
+
+            client = TestClient(app)
+            response = client.post(
+                "/chat",
+                json={"query": "Hi", "generate_images": False},
+                headers={"Authorization": "Bearer valid-token"}
+            )
+
+            assert response.status_code == 200
+            mock_context.assert_not_called()
+
+    def test_chat_falls_back_when_translation_to_english_fails(self):
+        """Test chat still returns 200 if translation to English throws."""
+        from api_server import app
+
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.detect_language") as mock_detect, \
+             patch("routes.chat.translate_to_english") as mock_translate_to_en, \
+             patch("routes.chat.translate_from_english") as mock_translate_from_en, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.extract_treatment_steps") as mock_steps, \
+             patch("routes.chat.detect_medical_topic") as mock_topic, \
+             patch("routes.chat.generate_all_step_images") as mock_images, \
+             patch("routes.chat.check_guest_limit") as mock_check_guest, \
+             patch("routes.chat.increment_guest_message") as mock_increment_guest, \
+             patch("routes.chat.log_guest_event") as mock_log_guest:
+
+            mock_safety.return_value = (True, "చిన్న గాయం", None)
+            mock_detect.return_value = "te"
+            mock_translate_to_en.side_effect = RuntimeError("translator down")
+            mock_translate_from_en.return_value = "Answer"
+            mock_output_safety.return_value = (True, "Answer", None)
+            mock_llm.return_value = "Answer"
+            mock_steps.return_value = []
+            mock_topic.return_value = "Topic"
+            mock_images.return_value = []
+            mock_check_guest.return_value = {"allowed": True, "remaining": 2, "message_count": 0, "limit": 3, "guest_id": "guest_1"}
+            mock_increment_guest.return_value = {"guest_id": "guest_1", "remaining": 2}
+
+            client = TestClient(app)
+            response = client.post(
+                "/chat",
+                json={"query": "చిన్న గాయం", "language": "Telugu", "generate_images": False}
+            )
+
+            assert response.status_code == 200
+            assert response.json()["answer"] == "Answer"
+
+    def test_chat_falls_back_when_step_image_generation_fails(self):
+        """Test chat returns 200 and no step images if image generation throws."""
+        from api_server import app
+
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.should_generate_images") as mock_should, \
+             patch("routes.chat.extract_treatment_steps") as mock_steps, \
+             patch("routes.chat.generate_all_step_images") as mock_images, \
+             patch("routes.chat.detect_medical_topic") as mock_topic, \
+             patch("routes.chat.check_guest_limit") as mock_check_guest, \
+             patch("routes.chat.increment_guest_message") as mock_increment_guest, \
+             patch("routes.chat.log_guest_event") as mock_log_guest:
+
+            mock_safety.return_value = (True, "How to treat a wound?", None)
+            mock_output_safety.return_value = (True, "Answer with steps", None)
+            mock_llm.return_value = "Answer with steps"
+            mock_should.return_value = True
+            mock_steps.return_value = [{"step_number": "1", "title": "Step 1", "description": "Do this"}]
+            mock_images.side_effect = RuntimeError("image model error")
+            mock_topic.return_value = "Topic"
+            mock_check_guest.return_value = {"allowed": True, "remaining": 2, "message_count": 0, "limit": 3, "guest_id": "guest_1"}
+            mock_increment_guest.return_value = {"guest_id": "guest_1", "remaining": 2}
+
+            client = TestClient(app)
+            response = client.post(
+                "/chat",
+                json={"query": "How to treat a wound?", "generate_images": True}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["steps_count"] == 0
+            assert data["step_images"] in (None, [])
+
     def test_upload_url_requires_auth(self):
         """Test that upload URL requires authentication."""
         from api_server import app
@@ -179,7 +287,7 @@ class TestHealthEndpoint:
         """Test that upload URL validates allowed file types."""
         from api_server import app
 
-        with patch("api_server.get_user_info") as mock_auth:
+        with patch("dependencies.get_user_info") as mock_auth:
             mock_auth.return_value = {"user_id": "user-123", "email": "test@test.com"}
 
             # Setup environment variable for reports bucket
@@ -199,7 +307,7 @@ class TestHealthEndpoint:
         from api_server import app
         client = TestClient(app)
 
-        with patch("api_server.generate_image") as mock_generate:
+        with patch("routes.chat.generate_image") as mock_generate:
             mock_generate.return_value = b"image-bytes"
 
             response = client.post(
@@ -218,12 +326,12 @@ class TestChatGuestLimitHeaders:
     def test_chat_uses_forwarded_ip_and_fingerprint(self):
         from api_server import app
 
-        with patch("api_server.check_input_safety") as mock_safety, \
-             patch("api_server.check_output_safety") as mock_output_safety, \
-             patch("api_server.invoke_llm") as mock_llm, \
-             patch("api_server.should_generate_images") as mock_should_images, \
-             patch("api_server.check_guest_limit") as mock_check, \
-             patch("api_server.increment_guest_message") as mock_increment:
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.should_generate_images") as mock_should_images, \
+             patch("routes.chat.check_guest_limit") as mock_check, \
+             patch("routes.chat.increment_guest_message") as mock_increment:
 
             mock_safety.return_value = (True, "Test query", None)
             mock_output_safety.return_value = (True, "Answer", None)
@@ -257,17 +365,17 @@ class TestChatOutputSafety:
     def test_chat_blocks_unsafe_output(self):
         from api_server import app
 
-        with patch("api_server.check_input_safety") as mock_safety, \
-             patch("api_server.check_output_safety") as mock_output_safety, \
-             patch("api_server.invoke_llm") as mock_llm, \
-             patch("api_server.generate_all_step_images") as mock_images:
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.generate_all_step_images") as mock_images:
 
             mock_safety.return_value = (True, "Test query", None)
             mock_llm.return_value = "Unsafe response"
             mock_output_safety.return_value = (False, "", "Safe fallback")
-            with patch("api_server.check_guest_limit") as mock_check_guest, \
-                 patch("api_server.increment_guest_message") as mock_increment_guest, \
-                 patch("api_server.log_guest_event") as mock_log_guest:
+            with patch("routes.chat.check_guest_limit") as mock_check_guest, \
+                 patch("routes.chat.increment_guest_message") as mock_increment_guest, \
+                 patch("routes.chat.log_guest_event") as mock_log_guest:
                 mock_check_guest.return_value = {"allowed": True, "remaining": 2, "message_count": 0, "limit": 3, "guest_id": "guest_1"}
                 mock_increment_guest.return_value = {"guest_id": "guest_1", "remaining": 2}
 
@@ -308,16 +416,16 @@ class TestChatStepImagePersistence:
             "panel_index": None
         }
 
-        with patch("api_server.check_input_safety") as mock_safety, \
-             patch("api_server.check_output_safety") as mock_output_safety, \
-             patch("api_server.invoke_llm") as mock_llm, \
-             patch("api_server.should_generate_images") as mock_should, \
-             patch("api_server.extract_treatment_steps") as mock_steps, \
-             patch("api_server.generate_all_step_images") as mock_images, \
-             patch("api_server.get_user_info") as mock_auth, \
-             patch("api_server.save_chat") as mock_save, \
-             patch("api_server.extract_facts_from_chat") as mock_extract_facts, \
-             patch("api_server.get_context_summary") as mock_context:
+        with patch("routes.chat.check_input_safety") as mock_safety, \
+             patch("routes.chat.check_output_safety") as mock_output_safety, \
+             patch("routes.chat.invoke_llm") as mock_llm, \
+             patch("routes.chat.should_generate_images") as mock_should, \
+             patch("routes.chat.extract_treatment_steps") as mock_steps, \
+             patch("routes.chat.generate_all_step_images") as mock_images, \
+             patch("dependencies.get_user_info") as mock_auth, \
+             patch("routes.chat.save_chat") as mock_save, \
+             patch("routes.chat.extract_facts_from_chat") as mock_extract_facts, \
+             patch("routes.chat.get_context_summary") as mock_context:
 
             mock_safety.return_value = (True, "Test query", None)
             mock_output_safety.return_value = (True, "Answer", None)
@@ -364,9 +472,9 @@ class TestDeleteChatEndpoint:
         """Test that chat is deleted for authenticated owner."""
         from api_server import app
 
-        with patch("api_server.get_user_info") as mock_auth:
+        with patch("dependencies.get_user_info") as mock_auth:
             mock_auth.return_value = {"user_id": "user-123", "email": "test@test.com"}
-            with patch("api_server.delete_chat") as mock_delete:
+            with patch("routes.history.delete_chat") as mock_delete:
                 mock_delete.return_value = True
 
                 client = TestClient(app)

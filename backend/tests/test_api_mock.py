@@ -38,17 +38,17 @@ MOCK_IMAGE_DATA = {
 }
 
 
-@patch('api_server.detect_language')
-@patch('api_server.translate_to_english')
-@patch('api_server.translate_from_english')
-@patch('api_server.check_output_safety')
-@patch('api_server.increment_guest_message')
-@patch('api_server.check_guest_limit')
-@patch('api_server.log_guest_event')
-@patch('api_server.invoke_llm')
-@patch('api_server.extract_treatment_steps')
-@patch('api_server.generate_all_step_images')
-@patch('api_server.should_generate_images')
+@patch('routes.chat.detect_language')
+@patch('routes.chat.translate_to_english')
+@patch('routes.chat.translate_from_english')
+@patch('routes.chat.check_output_safety')
+@patch('routes.chat.increment_guest_message')
+@patch('routes.chat.check_guest_limit')
+@patch('routes.chat.log_guest_event')
+@patch('routes.chat.invoke_llm')
+@patch('routes.chat.extract_treatment_steps')
+@patch('routes.chat.generate_all_step_images')
+@patch('routes.chat.should_generate_images')
 def test_chat_endpoint(
     mock_should,
     mock_gen_images,
@@ -88,11 +88,11 @@ def test_chat_endpoint(
     assert data["original_query"] == "I have a cut"
 
 
-@patch('api_server.invoke_llm')
-@patch('api_server.check_output_safety')
-@patch('api_server.increment_guest_message')
-@patch('api_server.check_guest_limit')
-@patch('api_server.log_guest_event')
+@patch('routes.chat.invoke_llm')
+@patch('routes.chat.check_output_safety')
+@patch('routes.chat.increment_guest_message')
+@patch('routes.chat.check_guest_limit')
+@patch('routes.chat.log_guest_event')
 def test_chat_endpoint_error(mock_log_guest, mock_check_guest, mock_increment_guest, mock_output_safety, mock_invoke):
     # Simulate LLM failure
     mock_invoke.return_value = None

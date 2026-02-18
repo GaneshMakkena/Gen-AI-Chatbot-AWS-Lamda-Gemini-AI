@@ -72,7 +72,7 @@ export function Layout() {
                 </div>
             </aside>
 
-            <main className="main-content">
+            <main className="main-content" id="main-content">
                 <Outlet />
             </main>
         </div>

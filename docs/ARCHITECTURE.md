@@ -61,6 +61,7 @@ MediBot is an AI-powered medical assistant that provides health information with
 | Module | Purpose |
 |--------|---------|
 | `api_server.py` | FastAPI routes, request handling |
+| `model_router.py` | Intelligent routing between Flash (simple) and Pro (complex) models |
 | `gemini_client.py` | Google Gemini AI integration |
 | `auth.py` | JWT verification, Cognito integration |
 | `chat_history.py` | Chat CRUD operations |

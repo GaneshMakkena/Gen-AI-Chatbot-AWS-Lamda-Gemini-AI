@@ -1,0 +1,3 @@
+"""
+MediBot Routes Package
+"""

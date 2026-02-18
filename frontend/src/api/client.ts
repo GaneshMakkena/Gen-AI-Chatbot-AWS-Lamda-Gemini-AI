@@ -107,6 +107,96 @@ export async function sendChatMessage(
     return data;
 }
 
+/**
+ * Send a chat message with Server-Sent Event streaming.
+ * Tokens are delivered incrementally via the onToken callback.
+ */
+export async function sendChatMessageStream(
+    request: ChatRequest,
+    callbacks: {
+        onToken: (text: string) => void;
+        onMetadata?: (topic: string | null, detectedLanguage: string) => void;
+        onStepImages?: (images: unknown[]) => void;
+        onDone?: () => void;
+        onError?: (message: string) => void;
+    },
+    authToken?: string
+): Promise<void> {
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+    };
+    if (authToken) {
+        headers['Authorization'] = authToken;
+    }
+
+    const response = await fetchWithTimeout(`${API_BASE_URL}/chat/stream`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+        const errorMessage = 'Failed to start streaming response';
+        callbacks.onError?.(errorMessage);
+        throw new ApiError(errorMessage, response.status);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+        throw new ApiError('No readable stream', 500);
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Parse SSE lines
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+            let currentEvent = '';
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    currentEvent = line.slice(7).trim();
+                } else if (line.startsWith('data: ')) {
+                    const data = line.slice(6);
+                    try {
+                        const parsed = JSON.parse(data);
+                        switch (currentEvent) {
+                            case 'token':
+                                callbacks.onToken(parsed.text || '');
+                                break;
+                            case 'metadata':
+                                callbacks.onMetadata?.(parsed.topic, parsed.detected_language);
+                                break;
+                            case 'step_images':
+                                callbacks.onStepImages?.(parsed);
+                                break;
+                            case 'done':
+                                callbacks.onDone?.();
+                                break;
+                            case 'error':
+                                callbacks.onError?.(parsed.message || 'Unknown error');
+                                break;
+                        }
+                    } catch {
+                        // Skip unparseable lines
+                    }
+                    currentEvent = '';
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock();
+    }
+}
+
 export { ApiError };
 // Profile Types
 export interface Condition {

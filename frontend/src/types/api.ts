@@ -103,3 +103,12 @@ export interface ChatDetailResponse {
   timestamp: number;
   created_at: string;
 }
+
+// SSE stream event types from /chat/stream endpoint
+export type StreamEvent =
+  | { type: 'token'; text: string }
+  | { type: 'metadata'; topic: string | null; detected_language: string }
+  | { type: 'step_images'; data: StepImage[] }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
+

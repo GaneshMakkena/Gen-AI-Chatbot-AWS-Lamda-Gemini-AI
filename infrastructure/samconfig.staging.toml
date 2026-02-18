@@ -1,0 +1,37 @@
+# Staging Environment Configuration
+# Copy this file, rename to samconfig.toml, and adjust values for your staging deployment.
+
+version = 0.1
+
+[staging]
+[staging.deploy]
+[staging.deploy.parameters]
+stack_name = "medibot-staging"
+resolve_s3 = true
+s3_prefix = "medibot-staging"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = [
+    "Environment=staging",
+    "GeminiFastModel=gemini-2.0-flash",
+    "FrontendDomain=",
+    "AlarmEmail=team@example.com"
+]
+tags = "Project=MediBot Environment=staging"
+
+[staging.build]
+[staging.build.parameters]
+use_container = false
+
+# Notes:
+# - Leave FrontendDomain empty to use CloudFront's auto-generated domain
+# - Set AlarmEmail to receive CloudWatch alarm notifications
+# - DynamoDB tables will be created with -staging suffix
+# - S3 buckets will include AWS Account ID to ensure uniqueness
+#
+# Deploy to staging:
+#   sam build && sam deploy --config-env staging
+#
+# Tear down staging:
+#   sam delete --stack-name medibot-staging --region us-east-1

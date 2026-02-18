@@ -4,20 +4,25 @@ Description: MediBot - AI Medical Chatbot with Step-by-Step Visual Instructions
 
 Globals:
   Function:
-    Timeout: 300  # 5 minutes for step-by-step image generation
-    MemorySize: 1024
+    Timeout: 300 # 5 minutes for step-by-step image generation
+    MemorySize: 1536 # Increased for faster cold starts (more memory = more CPU)
 
 Parameters:
   GoogleApiKey:
     Type: String
     NoEcho: true
     Description: Google AI API Key for Gemini models
-  
+
   GeminiLlmModel:
     Type: String
-    Default: gemini-2.0-flash
+    Default: gemini-2.5-pro
     Description: Gemini Model ID for LLM (text generation)
-  
+
+  GeminiFastModel:
+    Type: String
+    Default: gemini-2.0-flash
+    Description: Fast model ID for simple queries (greetings, basic FAQ)
+
   Environment:
     Type: String
     Default: production
@@ -25,6 +30,28 @@ Parameters:
       - production
       - staging
     Description: Deployment environment
+
+  FrontendDomain:
+    Type: String
+    Default: ''
+    Description: CloudFront domain for frontend (e.g.
+      d17eixu2k5iihu.cloudfront.net). Leave empty to use auto-generated domain.
+
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Email address for CloudWatch alarm notifications. Leave empty to
+      skip SNS setup.
+
+Conditions:
+  HasFrontendDomain: !Not
+    - !Equals
+      - !Ref FrontendDomain
+      - ''
+  HasAlarmEmail: !Not
+    - !Equals
+      - !Ref AlarmEmail
+      - ''
 
 Resources:
   # Lambda Function for FastAPI Backend
@@ -35,17 +62,23 @@ Resources:
       CodeUri: ../backend/
       Handler: lambda_handler.handler
       Runtime: python3.11
-      Timeout: 300  # 300 seconds (5 mins) for heavy image generation load
-      MemorySize: 1024  # 1GB RAM
+      Timeout: 300 # 300 seconds (5 mins) for heavy image generation load
+      MemorySize: 1536 # 1.5GB RAM — more memory = more CPU = faster cold starts
       Architectures:
-        - x86_64  # Changed from arm64 for build compatibility
-      Tracing: Active  # Enable X-Ray tracing for observability
+        - x86_64 # Changed from arm64 for build compatibility
+      Tracing: Active # Enable X-Ray tracing for observability
       Environment:
         Variables:
           GOOGLE_API_KEY: !Ref GoogleApiKey
           GEMINI_LLM_MODEL: !Ref GeminiLlmModel
+          GEMINI_FAST_MODEL: !Ref GeminiFastModel
           ENVIRONMENT: !Ref Environment
           IMAGES_BUCKET: !Ref ImagesBucket
+          IMAGES_CDN_URL: !Sub https://${ImagesDistribution.DomainName}
+          FRONTEND_DOMAIN: !If
+            - HasFrontendDomain
+            - !Ref FrontendDomain
+            - !GetAtt CloudFrontDistribution.DomainName
           # Phase 2: Auth & Storage
           COGNITO_USER_POOL_ID: !Ref UserPool
           COGNITO_CLIENT_ID: !Ref UserPoolClient
@@ -56,6 +89,9 @@ Resources:
           # Phase 3: Security & Abuse Prevention
           GUEST_TABLE: !Ref GuestSessionsTable
           AUDIT_TABLE: !Ref AuditLogTable
+          RATE_LIMIT_TABLE: !Ref RateLimitTable
+          # Performance: Response Cache
+          RESPONSE_CACHE_TABLE: !Ref ResponseCacheTable
       Policies:
         - Statement:
             - Effect: Allow
@@ -102,6 +138,14 @@ Resources:
               Resource:
                 - !GetAtt AuditLogTable.Arn
                 - !Sub ${AuditLogTable.Arn}/index/*
+            # Performance: Response Cache permissions
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+                - dynamodb:DeleteItem
+              Resource:
+                - !GetAtt ResponseCacheTable.Arn
             # Phase 2: Reports bucket permissions
             - Effect: Allow
               Action:
@@ -133,10 +177,15 @@ Resources:
         ThrottlingRateLimit: 5
       CorsConfiguration:
         AllowOrigins:
-          - "https://d17eixu2k5iihu.cloudfront.net"
+          - !If
+            - HasFrontendDomain
+            - !Sub https://${FrontendDomain}
+            - !Sub https://${CloudFrontDistribution.DomainName}
         AllowMethods:
           - GET
           - POST
+          - PUT
+          - DELETE
           - OPTIONS
         AllowHeaders:
           - Content-Type
@@ -144,34 +193,37 @@ Resources:
           - X-Requested-With
         MaxAge: 86400
 
-  # S3 Bucket for Generated Images (public read access)
+  # S3 Bucket for Generated Images (private, served via CloudFront)
   ImagesBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub medibot-images-${AWS::AccountId}-${AWS::Region}-${Environment}
-      # Encryption at rest (audit recommendation)
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-      CorsConfiguration:
-        CorsRules:
-          - AllowedHeaders: ['*']
-            AllowedMethods: [GET]
-            AllowedOrigins: ['*']
-            MaxAge: 3600
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
       LifecycleConfiguration:
         Rules:
           - Id: DeleteOldImages
             Status: Enabled
-            ExpirationInDays: 1  # Auto-delete images after 1 day
+            ExpirationInDays: 1
 
-  # Public read policy for images bucket
+  # OAC for images bucket CloudFront access
+  ImagesOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub medibot-images-oac-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Images bucket policy for CloudFront OAC
   ImagesBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -179,9 +231,33 @@ Resources:
       PolicyDocument:
         Statement:
           - Effect: Allow
-            Principal: '*'
+            Principal:
+              Service: cloudfront.amazonaws.com
             Action: s3:GetObject
             Resource: !Sub ${ImagesBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${ImagesDistribution}
+
+  # CloudFront Distribution for images
+  ImagesDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: ImagesBucketOrigin
+            DomainName: !GetAtt ImagesBucket.RegionalDomainName
+            OriginAccessControlId: !Ref ImagesOAC
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: ImagesBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        PriceClass: PriceClass_100
+        HttpVersion: http2
 
   # ============================================
   # Phase 2: User Authentication & Data Storage
@@ -226,10 +302,16 @@ Resources:
       SupportedIdentityProviders:
         - COGNITO
       CallbackURLs:
-        - https://d17eixu2k5iihu.cloudfront.net
+        - !If
+          - HasFrontendDomain
+          - !Sub https://${FrontendDomain}
+          - !Sub https://${CloudFrontDistribution.DomainName}
         - http://localhost:3000
       LogoutURLs:
-        - https://d17eixu2k5iihu.cloudfront.net
+        - !If
+          - HasFrontendDomain
+          - !Sub https://${FrontendDomain}
+          - !Sub https://${CloudFrontDistribution.DomainName}
         - http://localhost:3000
       AllowedOAuthFlows:
         - code
@@ -252,7 +334,7 @@ Resources:
         - AttributeName: chat_id
           AttributeType: S
         - AttributeName: timestamp
-          AttributeType: N
+          AttributeType: 'N'
       KeySchema:
         - AttributeName: user_id
           KeyType: HASH
@@ -285,11 +367,11 @@ Resources:
           KeyType: HASH
       # No TTL - health data persists until user deletes
 
-  # ============================================
-  # Phase 3: Security & Abuse Prevention Tables
-  # ============================================
+      # ============================================
+      # Phase 3: Security & Abuse Prevention Tables
+      # ============================================
 
-  # DynamoDB Table for Guest Sessions (abuse prevention)
+      # DynamoDB Table for Guest Sessions (abuse prevention)
   GuestSessionsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -303,7 +385,7 @@ Resources:
           KeyType: HASH
       TimeToLiveSpecification:
         AttributeName: ttl
-        Enabled: true  # Auto-cleanup expired guest sessions
+        Enabled: true # Auto-cleanup expired guest sessions
 
   # DynamoDB Table for Audit Logs (security & compliance)
   AuditLogTable:
@@ -317,7 +399,7 @@ Resources:
         - AttributeName: user_id
           AttributeType: S
         - AttributeName: timestamp
-          AttributeType: N
+          AttributeType: 'N'
       KeySchema:
         - AttributeName: event_id
           KeyType: HASH
@@ -332,11 +414,21 @@ Resources:
             ProjectionType: ALL
       TimeToLiveSpecification:
         AttributeName: ttl
-        Enabled: true  # 90-day retention via TTL
+        Enabled: true # 90-day retention via TTL
 
   # ============================================
   # Phase 4: Monitoring & Alerting
   # ============================================
+
+  # SNS Topic for Alarm Notifications
+  AlarmNotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-alarms
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
 
   # CloudWatch Alarm: API 5xx Errors
   ApiErrorAlarm:
@@ -350,11 +442,19 @@ Resources:
         - Name: Environment
           Value: !Ref Environment
       Statistic: Sum
-      Period: 300  # 5 minutes
+      Period: 300
       EvaluationPeriods: 2
       Threshold: 10
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
+      OKActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
 
   # CloudWatch Alarm: LLM Service Errors
   LlmErrorAlarm:
@@ -373,6 +473,14 @@ Resources:
       Threshold: 5
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
+      OKActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
 
   # CloudWatch Alarm: Guest Rate Limit Hits
   GuestLimitAlarm:
@@ -386,11 +494,19 @@ Resources:
         - Name: Environment
           Value: !Ref Environment
       Statistic: Sum
-      Period: 3600  # 1 hour
+      Period: 3600
       EvaluationPeriods: 1
       Threshold: 50
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
+      OKActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
 
   # CloudWatch Alarm: High Latency
   HighLatencyAlarm:
@@ -406,9 +522,49 @@ Resources:
       ExtendedStatistic: p95
       Period: 300
       EvaluationPeriods: 3
-      Threshold: 30000  # 30 seconds
+      Threshold: 30000
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
+      AlarmActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
+      OKActions: !If
+        - HasAlarmEmail
+        - - !Ref AlarmNotificationTopic
+        - []
+
+  # DynamoDB Table for Rate Limiting (authenticated users)
+  RateLimitTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub medibot-rate-limits-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: user_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: user_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # Performance: Response Cache Table
+  ResponseCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub medibot-response-cache-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: cache_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: cache_key
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
 
   # S3 Bucket for Medical Reports (private, encrypted)
   ReportsBucket:
@@ -426,17 +582,24 @@ Resources:
               SSEAlgorithm: AES256
       CorsConfiguration:
         CorsRules:
-          - AllowedHeaders: ['*']
-            AllowedMethods: [GET, PUT, POST]
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
             AllowedOrigins:
-              - https://d17eixu2k5iihu.cloudfront.net
+              - !If
+                - HasFrontendDomain
+                - !Sub https://${FrontendDomain}
+                - !Sub https://${CloudFrontDistribution.DomainName}
               - http://localhost:3000
             MaxAge: 3600
       LifecycleConfiguration:
         Rules:
           - Id: DeleteOldReports
             Status: Enabled
-            ExpirationInDays: 30  # Auto-delete reports after 30 days
+            ExpirationInDays: 30 # Auto-delete reports after 30 days
 
   # S3 Bucket for Frontend Static Files
   FrontendBucket:
@@ -452,14 +615,17 @@ Resources:
         IndexDocument: index.html
         ErrorDocument: 404.html
 
-  # CloudFront Origin Access Identity
-  CloudFrontOAI:
-    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+  # CloudFront Origin Access Control (OAC) - replaces legacy OAI
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
     Properties:
-      CloudFrontOriginAccessIdentityConfig:
-        Comment: !Sub OAI for MediBot Frontend ${Environment}
+      OriginAccessControlConfig:
+        Name: !Sub medibot-frontend-oac-${Environment}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
 
-  # S3 Bucket Policy for CloudFront
+  # S3 Bucket Policy for CloudFront OAC
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -468,9 +634,12 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              CanonicalUser: !GetAtt CloudFrontOAI.S3CanonicalUserId
+              Service: cloudfront.amazonaws.com
             Action: s3:GetObject
             Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
 
   # CloudFront Distribution
   CloudFrontDistribution:
@@ -482,12 +651,13 @@ Resources:
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !Ref FrontendOAC
             S3OriginConfig:
-              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${CloudFrontOAI}
+              OriginAccessIdentity: ''
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # CachingOptimized
           Compress: true
         CustomErrorResponses:
           - ErrorCode: 404
@@ -502,7 +672,7 @@ Resources:
 Outputs:
   ApiUrl:
     Description: API Gateway URL for the MediBot backend
-    Value: !Sub "https://${MediBotApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+    Value: !Sub https://${MediBotApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
     Export:
       Name: !Sub ${AWS::StackName}-ApiUrl
 
@@ -514,7 +684,7 @@ Outputs:
 
   CloudFrontUrl:
     Description: CloudFront distribution URL for the frontend
-    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+    Value: !Sub https://${CloudFrontDistribution.DomainName}
     Export:
       Name: !Sub ${AWS::StackName}-CloudFrontUrl
 
@@ -571,3 +741,21 @@ Outputs:
     Value: !Ref AuditLogTable
     Export:
       Name: !Sub ${AWS::StackName}-AuditLogTable
+
+  FrontendDomainOutput:
+    Description: Frontend domain name
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub ${AWS::StackName}-FrontendDomain
+
+  ImagesCdnUrl:
+    Description: CloudFront URL for generated images
+    Value: !Sub https://${ImagesDistribution.DomainName}
+    Export:
+      Name: !Sub ${AWS::StackName}-ImagesCdnUrl
+
+  RateLimitTableName:
+    Description: DynamoDB table for rate limiting
+    Value: !Ref RateLimitTable
+    Export:
+      Name: !Sub ${AWS::StackName}-RateLimitTable
