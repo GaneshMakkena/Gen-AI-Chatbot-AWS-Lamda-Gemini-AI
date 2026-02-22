@@ -402,6 +402,8 @@ export function ChatInterface() {
             let accumulatedText = "";
             let finalResponse: ChatResponse = {
                 answer: "",
+                original_query: query,
+                detected_language: "en",
                 steps_count: 0,
                 step_images: [],
                 images: []
@@ -414,7 +416,7 @@ export function ChatInterface() {
             }, {
                 onToken: (text) => {
                     accumulatedText += text;
-                    setMessages(prev => prev.map(m => 
+                    setMessages(prev => prev.map(m =>
                         m.id === aiMessageId ? { ...m, content: accumulatedText } : m
                     ));
                     // Optional: Scroll to bottom while streaming
@@ -432,7 +434,7 @@ export function ChatInterface() {
                 },
                 onDone: () => {
                     finalResponse.answer = accumulatedText;
-                    setMessages(prev => prev.map(m => 
+                    setMessages(prev => prev.map(m =>
                         m.id === aiMessageId ? { ...m, content: accumulatedText, response: finalResponse } : m
                     ));
                     chatState.setSuccess(finalResponse);
