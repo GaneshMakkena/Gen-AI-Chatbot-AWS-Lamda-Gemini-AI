@@ -14,7 +14,7 @@ confirm_changeset = true
 capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
 parameter_overrides = [
     "Environment=staging",
-    "GeminiFastModel=gemini-2.0-flash",
+    "GeminiFastModel=gemini-2.5-flash",
     "FrontendDomain=",
     "AlarmEmail=team@example.com"
 ]

@@ -1,7 +1,7 @@
 """
 Intelligent Model Router — Use the Right Model for the Right Task.
 
-Routes simple queries (greetings, basic FAQ) to gemini-2.0-flash (fast, cheap)
+Routes simple queries (greetings, basic FAQ) to gemini-2.5-flash (fast, cheap)
 and complex medical queries to gemini-2.5-pro (thorough, accurate).
 """
 
@@ -14,7 +14,7 @@ from aws_lambda_powertools import Logger
 logger = Logger(service="medibot")
 
 # Model IDs
-FAST_MODEL = os.getenv("GEMINI_FAST_MODEL", "gemini-2.0-flash")
+FAST_MODEL = os.getenv("GEMINI_FAST_MODEL", "gemini-2.5-flash")
 PRO_MODEL = os.getenv("GEMINI_LLM_MODEL", "gemini-2.5-pro")
 
 # Greeting / chitchat patterns

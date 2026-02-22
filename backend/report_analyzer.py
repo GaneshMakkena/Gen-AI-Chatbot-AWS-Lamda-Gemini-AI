@@ -135,7 +135,7 @@ def analyze_report(file_key: str, user_id: str) -> Dict[str, Any]:
             image_part = types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
 
             response = client.models.generate_content(
-                model="gemini-2.0-flash-exp",
+                model="gemini-2.5-flash",
                 contents=[EXTRACTION_PROMPT, image_part]
             )
         elif file_ext == "pdf":
@@ -143,7 +143,7 @@ def analyze_report(file_key: str, user_id: str) -> Dict[str, Any]:
             pdf_part = types.Part.from_bytes(data=file_bytes, mime_type="application/pdf")
 
             response = client.models.generate_content(
-                model="gemini-2.0-flash-exp",
+                model="gemini-2.5-flash",
                 contents=[EXTRACTION_PROMPT, pdf_part]
             )
         else:
@@ -336,7 +336,7 @@ Do NOT infer or guess - only extract what the user directly said.
     try:
         client = get_client()
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-flash",
             contents=extraction_prompt
         )
 

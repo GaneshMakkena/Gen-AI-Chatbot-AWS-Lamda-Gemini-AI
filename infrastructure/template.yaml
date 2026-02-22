@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: MediBot - AI Medical Chatbot with Step-by-Step Visual Instructions
 
@@ -20,7 +20,7 @@ Parameters:
 
   GeminiFastModel:
     Type: String
-    Default: gemini-2.0-flash
+    Default: gemini-2.5-flash
     Description: Fast model ID for simple queries (greetings, basic FAQ)
 
   Environment:
@@ -33,25 +33,26 @@ Parameters:
 
   FrontendDomain:
     Type: String
-    Default: ''
+    Default: ""
     Description: CloudFront domain for frontend (e.g.
       d17eixu2k5iihu.cloudfront.net). Leave empty to use auto-generated domain.
 
   AlarmEmail:
     Type: String
-    Default: ''
-    Description: Email address for CloudWatch alarm notifications. Leave empty to
+    Default: ""
+    Description:
+      Email address for CloudWatch alarm notifications. Leave empty to
       skip SNS setup.
 
 Conditions:
   HasFrontendDomain: !Not
     - !Equals
       - !Ref FrontendDomain
-      - ''
+      - ""
   HasAlarmEmail: !Not
     - !Equals
       - !Ref AlarmEmail
-      - ''
+      - ""
 
 Resources:
   # Lambda Function for FastAPI Backend
@@ -252,7 +253,7 @@ Resources:
             DomainName: !GetAtt ImagesBucket.RegionalDomainName
             OriginAccessControlId: !Ref ImagesOAC
             S3OriginConfig:
-              OriginAccessIdentity: ''
+              OriginAccessIdentity: ""
         DefaultCacheBehavior:
           TargetOriginId: ImagesBucketOrigin
           ViewerProtocolPolicy: redirect-to-https
@@ -336,7 +337,7 @@ Resources:
         - AttributeName: chat_id
           AttributeType: S
         - AttributeName: timestamp
-          AttributeType: 'N'
+          AttributeType: "N"
       KeySchema:
         - AttributeName: user_id
           KeyType: HASH
@@ -401,7 +402,7 @@ Resources:
         - AttributeName: user_id
           AttributeType: S
         - AttributeName: timestamp
-          AttributeType: 'N'
+          AttributeType: "N"
       KeySchema:
         - AttributeName: event_id
           KeyType: HASH
@@ -585,7 +586,7 @@ Resources:
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders:
-              - '*'
+              - "*"
             AllowedMethods:
               - GET
               - PUT
@@ -655,7 +656,7 @@ Resources:
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
             OriginAccessControlId: !Ref FrontendOAC
             S3OriginConfig:
-              OriginAccessIdentity: ''
+              OriginAccessIdentity: ""
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
