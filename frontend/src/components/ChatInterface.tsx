@@ -8,7 +8,7 @@ import { useParams } from 'react-router-dom';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { Send, Loader2, Plus } from 'lucide-react';
 import { useChatState } from '../hooks/useChatState';
-import { sendChatMessage, getPresignedUrl, uploadFileToS3, getChat, ApiError } from '../api/client';
+import { sendChatMessage, sendChatMessageStream, getPresignedUrl, uploadFileToS3, getChat, ApiError } from '../api/client';
 import { StepCard } from './StepCard';
 import type { ChatResponse, ConversationMessage } from '../types/api';
 import { formatMarkdown, sanitizeHtml } from '../utils/markdown';
@@ -389,21 +389,59 @@ export function ChatInterface() {
                 content: m.role === 'assistant' && m.response ? m.response.answer : m.content,
             }));
 
-            const response = await sendChatMessage({
-                query,
-                generate_images: generateImages,
-                conversation_history: conversationHistory,
-            }, authToken); // Pass auth token (can be undefined for public/guest if checks passed)
-
+            // Create initial empty message for streaming
+            const aiMessageId = (Date.now() + 1).toString();
             const assistantMessage: Message = {
-                id: (Date.now() + 1).toString(),
+                id: aiMessageId,
                 role: 'assistant',
-                content: response.answer,
-                response,
+                content: '',
                 timestamp: new Date(),
             };
             setMessages(prev => [...prev, assistantMessage]);
-            chatState.setSuccess(response);
+
+            let accumulatedText = "";
+            let finalResponse: ChatResponse = {
+                answer: "",
+                steps_count: 0,
+                step_images: [],
+                images: []
+            };
+
+            await sendChatMessageStream({
+                query,
+                generate_images: generateImages,
+                conversation_history: conversationHistory,
+            }, {
+                onToken: (text) => {
+                    accumulatedText += text;
+                    setMessages(prev => prev.map(m => 
+                        m.id === aiMessageId ? { ...m, content: accumulatedText } : m
+                    ));
+                    // Optional: Scroll to bottom while streaming
+                    if (messagesEndRef.current) {
+                        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+                    }
+                },
+                onMetadata: (topic, detectedLanguage) => {
+                    finalResponse.topic = topic || undefined;
+                    finalResponse.detected_language = detectedLanguage;
+                },
+                onStepImages: (images: any[]) => {
+                    finalResponse.step_images = images;
+                    finalResponse.steps_count = images.length;
+                },
+                onDone: () => {
+                    finalResponse.answer = accumulatedText;
+                    setMessages(prev => prev.map(m => 
+                        m.id === aiMessageId ? { ...m, content: accumulatedText, response: finalResponse } : m
+                    ));
+                    chatState.setSuccess(finalResponse);
+                },
+                onError: (msg) => {
+                    chatState.setError(msg);
+                }
+            }, authToken);
+
         } catch (error) {
             let errorMessage = 'An unexpected error occurred. Please try again.';
             if (error instanceof ApiError) {
@@ -489,7 +527,9 @@ export function ChatInterface() {
                             ) : message.response ? (
                                 <ResponseDisplay response={message.response} />
                             ) : (
-                                <p>{message.content}</p>
+                                <div className="response-text">
+                                    <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(formatMarkdown(message.content)) + (chatState.state === 'WAITING' ? '<span class="typing-cursor"></span>' : '') }} />
+                                </div>
                             )}
                         </div>
                     </div>
