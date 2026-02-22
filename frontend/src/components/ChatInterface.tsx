@@ -579,7 +579,6 @@ export function ChatInterface() {
                         className="attach-button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isLoading || uploading || isGuestLocked}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 0.5rem', color: '#6b7280' }}
                         title={!isAuthenticated ? "Login required" : "Attach file"}
                     >
                         <Plus size={24} />
@@ -587,6 +586,7 @@ export function ChatInterface() {
 
                     <input
                         type="text"
+                        className="chat-input"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         placeholder={isGuestLocked ? "Free limit reached. Please login." : "Ask a medical question..."}
@@ -595,8 +595,8 @@ export function ChatInterface() {
                     />
                     <button
                         type="submit"
+                        className={`send-button ${isLoading || uploading ? 'loading' : ''}`}
                         disabled={isLoading || uploading || !input.trim() || isGuestLocked}
-                        className={isLoading || uploading ? 'loading' : ''}
                     >
                         {isLoading || uploading ? <Loader2 className="spin" size={20} /> : <Send size={20} />}
                     </button>
