@@ -40,14 +40,16 @@ else:
         "https://d2g86is4qt16os.cloudfront.net",  # Production frontend (ap-south-2)
     ])
 
-# Always enable CORS middleware so FastAPI handles OPTIONS requests correctly
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-)
+# Only enable CORS middleware if NOT running in Lambda (Lambda Function URL / API Gateway handles CORS)
+# For streaming responses in Lambda, we add CORS headers manually in the route handler.
+if not os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    )
 
 # Import route modules and include routers
 from routes.chat import router as chat_router  # noqa: E402
