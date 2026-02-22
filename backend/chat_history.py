@@ -35,6 +35,7 @@ def get_table():
 _s3_client = None
 IMAGES_BUCKET = os.getenv("IMAGES_BUCKET", "")
 
+
 def _get_s3_client():
     """Get or create S3 client."""
     global _s3_client

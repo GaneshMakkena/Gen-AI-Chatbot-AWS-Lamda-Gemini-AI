@@ -2,7 +2,7 @@
 Tests for response_cache.py — DynamoDB-backed Response Cache.
 """
 
-import pytest
+
 from unittest.mock import patch, MagicMock
 from response_cache import normalize_query, get_cache_key, get_cached_response, cache_response
 

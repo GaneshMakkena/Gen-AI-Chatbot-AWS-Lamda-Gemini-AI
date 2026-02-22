@@ -7,11 +7,9 @@ Events are stored in DynamoDB with TTL for automatic cleanup.
 
 import os
 import boto3
-import json
 import uuid
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
-from enum import Enum
 from functools import wraps
 
 # Environment variables

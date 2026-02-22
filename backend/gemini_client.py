@@ -40,6 +40,8 @@ if GOOGLE_API_KEY:
     client = genai.Client(api_key=GOOGLE_API_KEY)
 
 # S3 client — delegated to centralized aws_clients for connection pooling
+
+
 def get_s3_client():
     """Get shared S3 client with connection pooling."""
     return _get_pooled_s3_client()
@@ -430,7 +432,7 @@ def create_step_visual_guide_prompt(step: Dict[str, str], query: str) -> str:
     Create a 4-panel grid prompt for ONE step.
     Each panel shows a different aspect of the same step.
     """
-    query_lower = query.lower()
+    _query_lower = query.lower()  # noqa: F841
 
     # Formal Production-Grade Image Prompt Template
     prompt = f"""Generate a medically informative visual guide using a 2×2 grid layout.

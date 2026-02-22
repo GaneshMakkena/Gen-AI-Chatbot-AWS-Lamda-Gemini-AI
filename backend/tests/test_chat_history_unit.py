@@ -7,6 +7,7 @@ Tests CRUD operations with mocked DynamoDB.
 import time
 from unittest.mock import patch, MagicMock
 
+
 class TestGenerateChatId:
     """Tests for chat ID generation."""
 

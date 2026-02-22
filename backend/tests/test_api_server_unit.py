@@ -75,14 +75,14 @@ class TestHealthEndpoint:
              patch("routes.chat.generate_all_step_images") as mock_images, \
              patch("routes.chat.check_guest_limit") as mock_check_guest, \
              patch("routes.chat.increment_guest_message") as mock_increment_guest, \
-             patch("routes.chat.log_guest_event") as mock_log_guest:
+             patch("routes.chat.log_guest_event") as _mock_log_guest:  # noqa: F841
 
             mock_safety.return_value = (True, "How to treat a headache?", None)
             mock_output_safety.return_value = (True, mock_answer, None)
             mock_llm.return_value = mock_answer
             mock_steps.return_value = [{"step_number": "1", "title": "Step 1", "description": "Do this", "image_prompt": "prompt"}]
             mock_topic.return_value = "Health Topic"
-            mock_images.return_value = [] # No images generated in this mock
+            mock_images.return_value = []  # No images generated in this mock
             mock_check_guest.return_value = {"allowed": True, "remaining": 2, "message_count": 0, "limit": 3, "guest_id": "guest_1"}
             mock_increment_guest.return_value = {"guest_id": "guest_1", "remaining": 2}
 
@@ -109,7 +109,7 @@ class TestHealthEndpoint:
              patch("routes.chat.generate_all_step_images") as mock_images, \
              patch("routes.chat.check_guest_limit") as mock_check_guest, \
              patch("routes.chat.increment_guest_message") as mock_increment_guest, \
-             patch("routes.chat.log_guest_event") as mock_log_guest:
+             patch("routes.chat.log_guest_event") as _mock_log_guest:  # noqa: F841
 
             mock_safety.return_value = (True, "Test query", None)
             mock_output_safety.return_value = (True, "Answer", None)
@@ -212,7 +212,7 @@ class TestHealthEndpoint:
              patch("routes.chat.generate_all_step_images") as mock_images, \
              patch("routes.chat.check_guest_limit") as mock_check_guest, \
              patch("routes.chat.increment_guest_message") as mock_increment_guest, \
-             patch("routes.chat.log_guest_event") as mock_log_guest:
+             patch("routes.chat.log_guest_event") as _mock_log_guest:  # noqa: F841
 
             mock_safety.return_value = (True, "చిన్న గాయం", None)
             mock_detect.return_value = "te"
@@ -248,7 +248,7 @@ class TestHealthEndpoint:
              patch("routes.chat.detect_medical_topic") as mock_topic, \
              patch("routes.chat.check_guest_limit") as mock_check_guest, \
              patch("routes.chat.increment_guest_message") as mock_increment_guest, \
-             patch("routes.chat.log_guest_event") as mock_log_guest:
+             patch("routes.chat.log_guest_event") as _mock_log_guest:  # noqa: F841
 
             mock_safety.return_value = (True, "How to treat a wound?", None)
             mock_output_safety.return_value = (True, "Answer with steps", None)
@@ -375,7 +375,7 @@ class TestChatOutputSafety:
             mock_output_safety.return_value = (False, "", "Safe fallback")
             with patch("routes.chat.check_guest_limit") as mock_check_guest, \
                  patch("routes.chat.increment_guest_message") as mock_increment_guest, \
-                 patch("routes.chat.log_guest_event") as mock_log_guest:
+                 patch("routes.chat.log_guest_event") as _mock_log_guest:  # noqa: F841
                 mock_check_guest.return_value = {"allowed": True, "remaining": 2, "message_count": 0, "limit": 3, "guest_id": "guest_1"}
                 mock_increment_guest.return_value = {"guest_id": "guest_1", "remaining": 2}
 

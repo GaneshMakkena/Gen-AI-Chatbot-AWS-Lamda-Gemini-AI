@@ -9,7 +9,7 @@ import os
 import secrets
 import hashlib
 import boto3
-from typing import List, Dict, Any
+from typing import List, Dict
 from datetime import datetime
 
 # Imports for password hashing

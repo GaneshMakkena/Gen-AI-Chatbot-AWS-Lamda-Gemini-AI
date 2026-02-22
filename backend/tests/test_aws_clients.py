@@ -2,7 +2,7 @@
 Tests for aws_clients.py — Centralized AWS Client Factory.
 """
 
-import pytest
+
 from unittest.mock import patch, MagicMock
 
 

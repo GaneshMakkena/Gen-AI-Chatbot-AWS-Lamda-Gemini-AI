@@ -355,7 +355,7 @@ def run_all_tests():
         # Phase 1: Images
         ("Phase 1: Image Generation", [
             test_image_generation_enabled,
-            test_image_generation_max_5,
+            test_image_generation_max_10,
             test_images_uploaded_to_s3,
         ]),
         # Phase 1: S3 Images

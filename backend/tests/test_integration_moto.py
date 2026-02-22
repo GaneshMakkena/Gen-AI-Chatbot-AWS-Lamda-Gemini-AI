@@ -9,7 +9,6 @@ import pytest
 import time
 import boto3
 from decimal import Decimal
-from unittest.mock import patch
 
 # Must be set before any imports that touch boto3
 os.environ["AWS_DEFAULT_REGION"] = "us-east-1"

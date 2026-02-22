@@ -11,7 +11,7 @@ from aws_lambda_powertools import Logger
 
 from models.request_models import PasswordCheckRequest
 from models.response_models import PasswordCheckResponse, UserInfo
-from dependencies import get_optional_user, require_auth, get_client_info
+from dependencies import require_auth, get_client_info
 # Improvement 2.4: Import password_history at module level
 from password_history import is_password_previously_used, store_password_hash
 from auth import get_user_info

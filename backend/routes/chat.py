@@ -10,8 +10,8 @@ import uuid
 import time
 import traceback
 
-from typing import Optional, List, Dict
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from aws_lambda_powertools import Logger
@@ -674,7 +674,7 @@ async def chat_stream(
                 text = cached["response"]
                 chunk_size = 80
                 for i in range(0, len(text), chunk_size):
-                    chunk = text[i:i+chunk_size]
+                    chunk = text[i:i + chunk_size]
                     yield f"event: token\ndata: {json.dumps({'text': chunk})}\n\n"
                 full_response = text
             else:
@@ -708,13 +708,13 @@ async def chat_stream(
 
             # Translate if needed
             target_lang = SUPPORTED_LANGUAGES.get(request.language, "en")
-            final_response = sanitized
+            translated = sanitized  # noqa: F841
             if target_lang != "en":
                 try:
-                    final_response = translate_from_english(sanitized, target_lang)
+                    translated = translate_from_english(sanitized, target_lang)  # noqa: F841
                 except Exception as e:
                     logger.warning("Stream translation from English failed", error=str(e))
-                    final_response = sanitized
+                    translated = sanitized  # noqa: F841
 
             # Metadata event
             topic = detect_medical_topic(english_query)

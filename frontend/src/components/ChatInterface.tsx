@@ -400,7 +400,7 @@ export function ChatInterface() {
             setMessages(prev => [...prev, assistantMessage]);
 
             let accumulatedText = "";
-            let finalResponse: ChatResponse = {
+            const finalResponse: ChatResponse = {
                 answer: "",
                 original_query: query,
                 detected_language: "en",
@@ -428,8 +428,8 @@ export function ChatInterface() {
                     finalResponse.topic = topic || undefined;
                     finalResponse.detected_language = detectedLanguage;
                 },
-                onStepImages: (images: any[]) => {
-                    finalResponse.step_images = images;
+                onStepImages: (images: unknown[]) => {
+                    finalResponse.step_images = images as ChatResponse['step_images'];
                     finalResponse.steps_count = images.length;
                 },
                 onDone: () => {
